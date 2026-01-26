@@ -1,26 +1,40 @@
-const express = require("express");
-const { authorize } = require("../../middlewares");
+const express = require('express')
+const { ctrlWrapper } = require('../../helpers')
+const ctrl = require('../../controllers/channelsController')
+const { authorize } = require('../../middlewares')
+const { uploadChannelBanner } = require('../../middlewares/uploadChannelBanner')
 
-const router = express.Router();
+const router = express.Router()
 
-// // Subscriptions (спочатку!)
-// router.get("/me/subscriptions", authorize /*, getMySubscriptions */);
-// router.post("/:id/subscribe", authorize /*, subscribeToChannel */);
-// router.delete("/:id/subscribe", authorize /*, unsubscribeFromChannel */);
+// 1) Мої канали (dropdown / studio)
+router.get('/', authorize, ctrlWrapper(ctrl.getMyChannelsController))
 
-// // Public (handle теж до :id)
-// router.get("/handle/:handle", /* getChannelByHandle */);
+// 2) Створити канал
+router.post(
+  '/create',
+  authorize,
+  uploadChannelBanner.single('banner'),
+  ctrlWrapper(ctrl.createChannelController),
+)
 
-// // Channel videos (до :id)
-// router.get("/:id/videos", /* getChannelVideos */);
+// 3) Перевірка унікальності handle (blur)
+router.get('/check-handle', ctrlWrapper(ctrl.checkHandleController))
 
-// // Single channel (після всього)
-// router.get("/:id", /* getChannel */);
+// 4) Отримати канал по handle (для /channel/@handle)
+router.get('/by-handle/:handle', ctrlWrapper(ctrl.getChannelByHandleController))
 
-// // Owner
-// router.post("/", authorize /*, createChannel */);
-// router.patch("/:id", authorize /*, updateChannel */);
-// router.delete("/:id", authorize /*, deleteChannel */);
+// 5) Отримати канал по id (публічно)
+router.get('/:id', ctrlWrapper(ctrl.getChannelController))
 
-module.exports = router;
+// 6) Оновити канал (універсально, включно з banner через multipart)
+router.patch(
+  '/:id',
+  authorize,
+  uploadChannelBanner.single('banner'),
+  ctrlWrapper(ctrl.updateChannelController),
+)
 
+// 7) Видалити канал
+router.delete('/:id', authorize, ctrlWrapper(ctrl.deleteChannelController))
+
+module.exports = router

@@ -4,9 +4,6 @@ if (!process.env.PRIVATE_KEY_ID || !process.env.PRIVATE_KEY) {
   throw new Error("Firebase env vars missing: PRIVATE_KEY_ID or PRIVATE_KEY");
 }
 
-console.log('Private Key ID:', process.env.PRIVATE_KEY_ID.slice(-4).padStart(process.env.PRIVATE_KEY_ID.length, '*'));
-console.log('Private Key:', process.env.PRIVATE_KEY ? 'Loaded' : 'Missing');
-
 const serviceAccount = {
   project_id: "mytube-dev",
   private_key_id: process.env.PRIVATE_KEY_ID,

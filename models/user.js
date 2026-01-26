@@ -26,8 +26,9 @@ const userSchema = new Schema(
       type: String,
       default: '',
     },
+    channels: { type: [{ type: Schema.Types.ObjectId, ref: 'channel' }], default: [] },
   },
-  { minimize: false, timestamps: true }
+  { minimize: false, timestamps: true },
 )
 
 userSchema.post("save", handleSaveErrors);
