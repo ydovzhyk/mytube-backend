@@ -19,6 +19,23 @@ const pick = (obj, keys) =>
     return acc
   }, {})
 
+  const parseLinksFromBody = (raw) => {
+    if (raw === undefined) return undefined
+    if (raw === null || raw === '') return []
+    if (Array.isArray(raw)) return raw
+
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+      } catch {
+        return []
+      }
+    }
+
+    return []
+  }
+
 // ---------- controllers ----------
 
 // GET /api/channels/ (authorize) -> my channels
@@ -76,9 +93,10 @@ const createChannelController = async (req, res) => {
   const ownerId = req.user?._id
   if (!ownerId) throw RequestError(401, 'Unauthorized')
 
-  const bannerFile = req.file
+  const bannerFile = req.file // works if upload.single('banner')
   let uploadedBannerTmpPath = null
   let newBannerUrl = null
+  let channel = null
 
   try {
     if (!bannerFile?.path) {
@@ -89,13 +107,16 @@ const createChannelController = async (req, res) => {
     const body = { ...req.body }
     body.handle = normalizeHandle(body.handle)
 
+    // links може прийти JSON-string
+    body.links = parseLinksFromBody(body.links)
+
     const { error, value } = schemas.createChannelSchema.validate(body)
     if (error) throw RequestError(400, error.message)
 
     const handleTaken = await Channel.exists({ handle: value.handle })
     if (handleTaken) throw RequestError(409, 'Handle already taken')
 
-    const channel = await Channel.create({
+    channel = await Channel.create({
       ...value,
       ownerId,
     })
@@ -121,9 +142,20 @@ const createChannelController = async (req, res) => {
 
     res.status(201).json({ channel })
   } catch (e) {
+    // якщо вже завантажили банер у Firebase — прибрати
     if (newBannerUrl) {
-      await deleteByPublicUrl(newBannerUrl)
+      try {
+        await deleteByPublicUrl(newBannerUrl)
+      } catch (_) {}
     }
+
+    // якщо канал створили, але далі щось впало — прибрати "сироту"
+    if (channel?._id && !newBannerUrl) {
+      try {
+        await Channel.deleteOne({ _id: channel._id })
+      } catch (_) {}
+    }
+
     throw e
   } finally {
     if (uploadedBannerTmpPath) {
@@ -150,9 +182,13 @@ const updateChannelController = async (req, res) => {
 
   const bannerFile = req.file
 
-  // Щоб дозволити PATCH тільки банером або тільки полями:
   const body = { ...req.body }
   if (body.handle !== undefined) body.handle = normalizeHandle(body.handle)
+
+  // links: multipart -> JSON-string
+  if (body.links !== undefined) {
+    body.links = parseLinksFromBody(body.links)
+  }
 
   const hasBanner = !!bannerFile?.path
   const hasBodyKeys = Object.keys(body).length > 0
@@ -166,7 +202,6 @@ const updateChannelController = async (req, res) => {
   let newBannerUrl = null
 
   try {
-    // 1) валідимо body тільки якщо там щось є
     let value = {}
     if (hasBodyKeys) {
       const { error, value: validated } =
@@ -174,7 +209,6 @@ const updateChannelController = async (req, res) => {
       if (error) throw RequestError(400, error.message)
       value = validated
 
-      // 2) handle uniqueness якщо міняємо
       if (value.handle && value.handle !== channel.handle) {
         const taken = await Channel.exists({
           handle: value.handle,
@@ -184,11 +218,12 @@ const updateChannelController = async (req, res) => {
       }
     }
 
-    // 3) якщо є banner файл — вантажимо у Firebase і одразу ставимо в patch
     const patch = pick(value, [
       'handle',
+      'name',
       'title',
       'bio',
+      'description',
       'avatarUrl',
       'contactEmail',
       'links',
@@ -208,23 +243,24 @@ const updateChannelController = async (req, res) => {
         destPath,
         contentType,
       )
-
       patch.bannerUrl = newBannerUrl
     }
 
-    // 4) apply update
     Object.assign(channel, patch)
     await channel.save()
 
-    // 5) delete старого банера, якщо поставили новий (best-effort)
     if (newBannerUrl && oldBannerUrl && oldBannerUrl !== newBannerUrl) {
-      await deleteByPublicUrl(oldBannerUrl)
+      try {
+        await deleteByPublicUrl(oldBannerUrl)
+      } catch (_) {}
     }
 
-    res.json({ channel })
+    res.status(201).json({ channel })
   } catch (e) {
     if (newBannerUrl) {
-      await deleteByPublicUrl(newBannerUrl)
+      try {
+        await deleteByPublicUrl(newBannerUrl)
+      } catch (_) {}
     }
     throw e
   } finally {

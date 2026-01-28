@@ -16,6 +16,14 @@ const channelSchema = new Schema(
       minlength: 3,
       maxlength: 40,
       match: handleRegex,
+      immutable: true,
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 30,
     },
     title: {
       type: String,
@@ -25,6 +33,7 @@ const channelSchema = new Schema(
       maxlength: 60,
     },
     bio: { type: String, default: '', maxlength: 2000, trim: true },
+    description: { type: String, default: '', maxlength: 2000, trim: true },
     avatarUrl: { type: String, default: '' },
     bannerUrl: { type: String, default: '' },
     contactEmail: { type: String, default: '', trim: true, maxlength: 120 },
@@ -55,17 +64,34 @@ const linkSchema = Joi.object({
 })
 
 const createChannelSchema = Joi.object({
-  handle: Joi.string().min(3).max(40).pattern(handleRegex).required(),
-  title: Joi.string().min(2).max(60).required(),
-  bio: Joi.string().max(2000).allow('').optional(),
+  handle: Joi.string()
+    .trim()
+    .lowercase()
+    .min(3)
+    .max(40)
+    .pattern(handleRegex)
+    .required(),
+  name: Joi.string().trim().min(2).max(30).required(),
+  title: Joi.string().trim().min(2).max(60).required(),
+  bio: Joi.string().trim().max(2000).allow('').optional(),
+  description: Joi.string().trim().max(2000).allow('').optional(),
   avatarUrl: Joi.string().max(2_000_000).allow('').optional(),
   contactEmail: Joi.string().email().max(120).allow('').optional(),
+  links: Joi.array().items(linkSchema).max(10).optional(),
 })
 
 const updateChannelSchema = Joi.object({
-  handle: Joi.string().min(3).max(40).pattern(handleRegex).optional(),
+  handle: Joi.string()
+    .trim()
+    .lowercase()
+    .min(3)
+    .max(40)
+    .pattern(handleRegex)
+    .optional(),
+  name: Joi.string().min(2).max(30).optional(),
   title: Joi.string().min(2).max(60).optional(),
   bio: Joi.string().max(2000).allow('').optional(),
+  description: Joi.string().max(2000).allow('').optional(),
   avatarUrl: Joi.string().max(2_000_000).allow('').optional(),
   contactEmail: Joi.string().email().max(120).allow('').optional(),
   links: Joi.array().items(linkSchema).max(10).optional(),

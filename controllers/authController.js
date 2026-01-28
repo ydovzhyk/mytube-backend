@@ -38,13 +38,6 @@ const clearAuthCookies = (res) => {
   res.clearCookie('refreshToken', COOKIE_BASE)
 }
 
-const toUserDto = (u) => ({
-  id: u._id,
-  name: u.name,
-  email: u.email,
-  userAvatar: u.userAvatar,
-})
-
 const signTokens = (userId, { refresh = true } = {}) => {
   const payload = { id: userId.toString() }
 
@@ -69,7 +62,7 @@ const register = async (req, res, next) => {
     const { accessToken, refreshToken } = signTokens(newUser._id)
     setAuthCookies(res, { accessToken, refreshToken })
 
-    return res.status(201).json({ user: toUserDto(newUser) })
+    return res.status(201).json({ user: newUser })
   } catch (e) {
     next(e)
   }
@@ -89,7 +82,7 @@ const login = async (req, res, next) => {
     const { accessToken, refreshToken } = signTokens(user._id)
     setAuthCookies(res, { accessToken, refreshToken })
 
-    return res.status(200).json({ user: toUserDto(user) })
+    return res.status(200).json({ user: user })
   } catch (e) {
     next(e)
   }
@@ -125,7 +118,7 @@ const getUserController = async (req, res, next) => {
       return res.status(401).json({ code: 'ACCESS_NEED_REFRESH', message: 'Unauthorized' })
     }
 
-    return res.status(200).json({ user: req.user ? toUserDto(req.user) : null })
+    return res.status(200).json({ user: req.user ? req.user : null })
   } catch (e) {
     next(e)
   }
@@ -148,7 +141,7 @@ const editUserController = async (req, res, next) => {
       runValidators: true,
     })
 
-    return res.status(200).json({ user: toUserDto(user), message: 'Profile updated successfully' })
+    return res.status(200).json({ user: user, message: 'Profile updated successfully' })
   } catch (e) {
     next(e)
   }
