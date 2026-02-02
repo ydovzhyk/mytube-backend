@@ -47,6 +47,7 @@ const channelSchema = new Schema(
       ],
       default: [],
     },
+    videos: { type: [{ type: Types.ObjectId, ref: 'video' }], default: [] },
     videosCount: { type: Number, default: 0, min: 0 },
     followersCount: { type: Number, default: 0, min: 0 },
     ownerId: { type: Types.ObjectId, ref: 'user', required: true, index: true },

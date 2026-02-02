@@ -1,8 +1,9 @@
 const express = require("express");
 const { ctrlWrapper } = require("../../helpers");
 const ctrl = require("../../controllers/videosContoller");
-const { authorize } = require("../../middlewares");
+const { authorize, validate } = require("../../middlewares");
 const { uploadVideo } = require("../../middlewares/uploadVideo");
+const { schemas } = require("../../models/video");
 
 const router = express.Router();
 
@@ -17,5 +18,23 @@ router.post(
   ]),
   ctrlWrapper(ctrl.uploadVideoController)
 );
+
+router.get(
+  "/channel",
+  validate(schemas.getChannelVideosQuerySchema),
+  ctrlWrapper(ctrl.getChannelVideoController)
+)
+
+router.get(
+  '/channel/owner',
+  validate(schemas.getChannelVideosQuerySchema),
+  ctrlWrapper(ctrl.getChannelVideoController),
+)
+
+router.get(
+  '/picker',
+  authorize,
+  ctrlWrapper(ctrl.getVideosPickerController),
+)
 
 module.exports = router;

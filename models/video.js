@@ -1,15 +1,36 @@
-const Joi = require("joi");
-const { Schema, model, Types } = require("mongoose");
-const { handleSaveErrors } = require("../helpers");
+const Joi = require('joi')
+const { Schema, model, Types } = require('mongoose')
+const { handleSaveErrors } = require('../helpers')
 
-const QUALITY_ENUM = ["360p", "480p", "720p"];
-const STATUS_ENUM = ["processing", "ready", "failed"];
+const QUALITY_ENUM = ['360p', '480p', '720p']
+const STATUS_ENUM = ['processing', 'ready', 'failed']
+const objectIdRegex = /^[0-9a-fA-F]{24}$/
+
+const channelSnapshotSchema = new Schema(
+  {
+    _id: { type: Types.ObjectId, required: true },
+    handle: { type: String, required: true, trim: true, lowercase: true },
+    title: { type: String, default: '', trim: true },
+    name: { type: String, default: '', trim: true },
+    avatarUrl: { type: String, default: '' },
+  },
+  { _id: false },
+)
+
+const statsSchema = new Schema(
+  {
+    views: { type: Number, default: 0, min: 0, index: true },
+    likes: { type: Number, default: 0, min: 0 },
+    comments: { type: Number, default: 0, min: 0 },
+  },
+  { _id: false },
+)
 
 const videoSchema = new Schema(
   {
     title: {
       type: String,
-      required: [true, "Video title is required"],
+      required: [true, 'Video title is required'],
       minlength: 2,
       maxlength: 140,
       trim: true,
@@ -17,20 +38,23 @@ const videoSchema = new Schema(
 
     description: {
       type: String,
-      default: "",
+      default: '',
       maxlength: 5000,
       trim: true,
     },
 
-    // прив'язка до каналу
     channelRef: {
       type: Types.ObjectId,
-      ref: "channel",
-      required: [true, "channelRef is required"],
+      ref: 'channel',
+      required: [true, 'channelRef is required'],
       index: true,
     },
 
-    // публікація
+    channelSnapshot: {
+      type: channelSnapshotSchema,
+      required: true,
+    },
+
     isPublished: {
       type: Boolean,
       default: false,
@@ -43,55 +67,43 @@ const videoSchema = new Schema(
       index: true,
     },
 
-    // стан пайплайна (upload → transcode → firebase)
     status: {
       type: String,
       enum: STATUS_ENUM,
-      default: "processing",
+      default: 'processing',
       index: true,
     },
 
     errorMessage: {
       type: String,
-      default: "",
+      default: '',
       maxlength: 2000,
     },
 
-    // URL прев'ю
     thumbnailUrl: {
       type: String,
-      default: "",
+      default: '',
     },
 
-    // Якісні варіанти + максимум
     availableQualities: {
       type: [String],
       default: [],
       validate: {
-        validator: (arr) => arr.every((q) => QUALITY_ENUM.includes(q)),
-        message: "availableQualities contains invalid quality",
+        validator: (arr) => (arr || []).every((q) => QUALITY_ENUM.includes(q)),
+        message: 'availableQualities contains invalid quality',
       },
     },
 
     maxQuality: {
       type: String,
-      default: "720p",
+      default: '720p',
       enum: QUALITY_ENUM,
     },
 
-    // Прямі public URLs до Firebase варіантів
-    // (заповнює бекенд після upload)
     sources: {
       type: Map,
       of: String,
       default: {},
-    },
-
-    views: {
-      type: Number,
-      default: 0,
-      min: 0,
-      index: true,
     },
 
     tags: {
@@ -99,52 +111,59 @@ const videoSchema = new Schema(
       default: [],
       set: (arr) =>
         Array.from(
-          new Set((arr || [])
-          .map((t) => String(t).trim().toLowerCase())
-          .filter(Boolean)
-          .slice(0, 30)
-          )
+          new Set(
+            (arr || [])
+              .map((t) => String(t).trim().toLowerCase())
+              .filter(Boolean)
+              .slice(0, 30),
+          ),
         ),
+      index: true,
     },
 
-    count: {
-      likes: { type: Number, default: 0, min: 0 },
-      comments: { type: Number, default: 0, min: 0 },
+    stats: {
+      type: statsSchema,
+      default: () => ({}),
     },
   },
-  { minimize: false, timestamps: true }
-);
+  { minimize: false, timestamps: true },
+)
 
-// індекси під фіди
-videoSchema.index({ isPublished: 1, publishedAt: -1, _id: -1 });
-videoSchema.index({ channelRef: 1, createdAt: -1 });
+videoSchema.index({ isPublished: 1, publishedAt: -1, _id: -1 })
+videoSchema.index({ channelRef: 1, createdAt: -1 })
 videoSchema.index({ tags: 1, isPublished: 1, publishedAt: -1 })
 
-videoSchema.post("save", handleSaveErrors);
+videoSchema.post('save', handleSaveErrors)
 
-const Video = model("video", videoSchema);
+const Video = model('video', videoSchema)
 
-// Joi (для запиту з фронта)
 const createVideoSchema = Joi.object({
   title: Joi.string().min(2).max(140).required(),
-  description: Joi.string().max(5000).allow("").optional(),
-  channelRef: Joi.string().required(),
-  isPublished: Joi.boolean().optional(), // якщо true — сервер сам виставить publishedAt
-});
+  description: Joi.string().max(5000).allow('').optional(),
+  channelRef: Joi.string().pattern(objectIdRegex).required(),
+  isPublished: Joi.boolean().optional(),
+})
 
-// Joi (для редагування базових полів)
 const updateVideoSchema = Joi.object({
   title: Joi.string().min(2).max(140).optional(),
-  description: Joi.string().max(5000).allow("").optional(),
+  description: Joi.string().max(5000).allow('').optional(),
   isPublished: Joi.boolean().optional(),
-}).min(1);
+}).min(1)
+
+
+
+const getChannelVideosQuerySchema = Joi.object({
+  channelId: Joi.string().pattern(objectIdRegex).required(),
+  publishedOnly: Joi.boolean().truthy('true').falsy('false').optional(),
+  sort: Joi.string().valid('latest', 'popular', 'oldest').optional(),
+  query: Joi.string().max(120).allow('').optional(),
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(50).default(20),
+})
 
 module.exports = {
   Video,
-  schemas: { createVideoSchema, updateVideoSchema },
+  schemas: { createVideoSchema, updateVideoSchema, getChannelVideosQuerySchema },
   QUALITY_ENUM,
   STATUS_ENUM,
-};
-
-
-
+}
