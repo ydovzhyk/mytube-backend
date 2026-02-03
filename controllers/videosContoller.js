@@ -268,9 +268,6 @@ async function getVideosPickerController(req, res, next) {
       status: 'ready',
     })
       .sort({ createdAt: -1, _id: -1 })
-      .select(
-        '_id title thumbnailUrl isPublished publishedAt createdAt status maxQuality stats.views stats.likes stats.comments',
-      )
       .lean()
 
     res.json({ items: docs })
