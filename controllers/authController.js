@@ -5,6 +5,7 @@ const { SECRET_KEY, REFRESH_SECRET_KEY } = process.env
 const { RequestError } = require('../helpers')
 
 const isProd = process.env.NODE_ENV === 'production'
+const WATCH_HISTORY_LIMIT = 200
 
 const COOKIE_BASE = {
   httpOnly: true,
@@ -48,7 +49,7 @@ const signTokens = (userId, { refresh = true } = {}) => {
   return { accessToken, refreshToken }
 }
 
-// REGISTER
+// REGISTER NEW USER
 const register = async (req, res, next) => {
   try {
     const { name, email, password, userAvatar } = req.body
@@ -68,7 +69,7 @@ const register = async (req, res, next) => {
   }
 }
 
-// LOGIN
+// LOGIN EXISTING USER
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body
@@ -88,7 +89,7 @@ const login = async (req, res, next) => {
   }
 }
 
-// REFRESH
+// REFRESH ACCESS TOKEN
 const refresh = async (req, res, next) => {
   try {
     const user = req.user
@@ -101,7 +102,7 @@ const refresh = async (req, res, next) => {
   }
 }
 
-// LOGOUT
+// LOGOUT USER
 const logout = async (req, res, next) => {
   try {
     clearAuthCookies(res)
@@ -111,7 +112,7 @@ const logout = async (req, res, next) => {
   }
 }
 
-// CURRENT
+// CURRENT USER
 const getUserController = async (req, res, next) => {
   try {
     if (!req.user && (req.authError === 'expired' || req.authError === 'missing')) {
@@ -124,7 +125,7 @@ const getUserController = async (req, res, next) => {
   }
 }
 
-// EDIT
+// EDIT USER (profile info like name, avatar, email)
 const editUserController = async (req, res, next) => {
   try {
     const { _id } = req.user
@@ -147,7 +148,112 @@ const editUserController = async (req, res, next) => {
   }
 }
 
-// DELETE
+// UPDATE USER (watched videos, liked videos/channels, saved playlists, etc.)
+const updateUserController = async (req, res) => {
+  const userId = req.user?._id
+  if (!userId) throw RequestError(401, 'Unauthorized')
+
+  const {
+    watchedVideoId,
+    likedVideoId,
+    unlikedVideoId,
+    savedPlaylistId,
+    unsavedPlaylistId,
+    likedChannelId,
+    unlikedChannelId,
+    subscribedChannelId,
+    unsubscribedChannelId,
+  } = req.body || {}
+
+  const hasAny =
+    watchedVideoId ||
+    likedVideoId ||
+    unlikedVideoId ||
+    savedPlaylistId ||
+    unsavedPlaylistId ||
+    likedChannelId ||
+    unlikedChannelId ||
+    subscribedChannelId ||
+    unsubscribedChannelId
+
+  if (!hasAny) throw RequestError(400, 'Nothing to update')
+
+  const user = await User.findById(userId)
+  if (!user) throw RequestError(404, 'User not found')
+
+  // --- WATCH HISTORY: dedupe + newest first + limit ---
+  if (watchedVideoId) {
+    const idStr = String(watchedVideoId)
+    const prev = Array.isArray(user.watchHistory) ? user.watchHistory : []
+    const filtered = prev.filter((it) => String(it?.videoId) !== idStr)
+    filtered.unshift({ videoId: watchedVideoId, watchedAt: new Date() })
+    user.watchHistory = filtered.slice(0, WATCH_HISTORY_LIMIT)
+  }
+
+  // --- LIKED VIDEOS ---
+  if (likedVideoId) {
+    const idStr = String(likedVideoId)
+    const arr = Array.isArray(user.likedVideos) ? user.likedVideos : []
+    if (!arr.some((x) => String(x) === idStr)) arr.push(likedVideoId)
+    user.likedVideos = arr
+  }
+  if (unlikedVideoId) {
+    const idStr = String(unlikedVideoId)
+    user.likedVideos = (user.likedVideos || []).filter(
+      (x) => String(x) !== idStr,
+    )
+  }
+
+  // --- LIKED CHANNELS ---
+  if (likedChannelId) {
+    const idStr = String(likedChannelId)
+    const arr = Array.isArray(user.likedChannels) ? user.likedChannels : []
+    if (!arr.some((x) => String(x) === idStr)) arr.push(likedChannelId)
+    user.likedChannels = arr
+  }
+  if (unlikedChannelId) {
+    const idStr = String(unlikedChannelId)
+    user.likedChannels = (user.likedChannels || []).filter(
+      (x) => String(x) !== idStr,
+    )
+  }
+
+  // --- SAVED PLAYLISTS ---
+  if (savedPlaylistId) {
+    const idStr = String(savedPlaylistId)
+    const arr = Array.isArray(user.savedPlaylists) ? user.savedPlaylists : []
+    if (!arr.some((x) => String(x) === idStr)) arr.push(savedPlaylistId)
+    user.savedPlaylists = arr
+  }
+  if (unsavedPlaylistId) {
+    const idStr = String(unsavedPlaylistId)
+    user.savedPlaylists = (user.savedPlaylists || []).filter(
+      (x) => String(x) !== idStr,
+    )
+  }
+
+  // --- SUBSCRIBED CHANNELS ---
+  if (subscribedChannelId) {
+    const idStr = String(subscribedChannelId)
+    const arr = Array.isArray(user.subscribedChannels)
+      ? user.subscribedChannels
+      : []
+    if (!arr.some((x) => String(x) === idStr)) arr.push(subscribedChannelId)
+    user.subscribedChannels = arr
+  }
+  if (unsubscribedChannelId) {
+    const idStr = String(unsubscribedChannelId)
+    user.subscribedChannels = (user.subscribedChannels || []).filter(
+      (x) => String(x) !== idStr,
+    )
+  }
+
+  await user.save()
+
+  res.json({ user: user })
+}
+
+// DELETE USER
 const deleteUserController = async (req, res, next) => {
   try {
     const { userId } = req.params
@@ -186,6 +292,7 @@ module.exports = {
   editUserController,
   deleteUserController,
   googleAuthController,
+  updateUserController,
 }
 
 

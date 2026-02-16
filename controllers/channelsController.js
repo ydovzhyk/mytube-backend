@@ -93,7 +93,7 @@ const createChannelController = async (req, res) => {
   const ownerId = req.user?._id
   if (!ownerId) throw RequestError(401, 'Unauthorized')
 
-  const bannerFile = req.file // works if upload.single('banner')
+  const bannerFile = req.file // works if upload.single('image')
   let uploadedBannerTmpPath = null
   let newBannerUrl = null
   let channel = null

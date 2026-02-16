@@ -2,7 +2,7 @@ const express = require('express')
 const { ctrlWrapper } = require('../../helpers')
 const ctrl = require('../../controllers/channelsController')
 const { authorize } = require('../../middlewares')
-const { uploadChannelBanner } = require('../../middlewares/uploadChannelBanner')
+const { uploadImage } = require('../../middlewares/uploadImage')
 
 const router = express.Router()
 
@@ -13,7 +13,7 @@ router.get('/', authorize, ctrlWrapper(ctrl.getMyChannelsController))
 router.post(
   '/create',
   authorize,
-  uploadChannelBanner.single('banner'),
+  uploadImage.single('image'),
   ctrlWrapper(ctrl.createChannelController),
 )
 
@@ -26,11 +26,11 @@ router.get('/by-handle/:handle', ctrlWrapper(ctrl.getChannelByHandleController))
 // 5) Отримати канал по id (публічно)
 router.get('/:id', ctrlWrapper(ctrl.getChannelController))
 
-// 6) Оновити канал (універсально, включно з banner через multipart)
+// 6) Оновити канал (універсально, включно з image через multipart)
 router.patch(
   '/:id',
   authorize,
-  uploadChannelBanner.single('banner'),
+  uploadImage.single('image'),
   ctrlWrapper(ctrl.updateChannelController),
 )
 

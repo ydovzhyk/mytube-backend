@@ -9,6 +9,7 @@ const authRouter = require('./routes/api/auth')
 const googleRouter = require('./routes/api/google')
 const videosRouter = require('./routes/api/videos')
 const channelsRouter = require('./routes/api/channels')
+const playlistsRouter = require('./routes/api/playlists')
 
 const { NODE_ENV } = process.env
 
@@ -42,6 +43,7 @@ app.use(cookieParser())
 app.use('/api/auth', authRouter)
 app.use('/api/videos', videosRouter)
 app.use('/api/channels', channelsRouter)
+app.use('/api/playlists', playlistsRouter)
 
 /** Google OAuth session (only for /api/google) **/
 app.use(

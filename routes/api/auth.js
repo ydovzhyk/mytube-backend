@@ -49,6 +49,14 @@ router.post(
   ctrlWrapper(ctrl.editUserController)
 );
 
+// Update user (watched videos, liked videos/channels, saved playlists, etc.)
+router.post(
+  "/update",
+  authorize,
+  validateBody(schemas.updateUserSchema),
+  ctrlWrapper(ctrl.updateUserController)
+);
+
 // Delete user
 router.delete(
   '/delete/:userId',

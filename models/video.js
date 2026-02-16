@@ -121,6 +121,12 @@ const videoSchema = new Schema(
       index: true,
     },
 
+    duration: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+
     stats: {
       type: statsSchema,
       default: () => ({}),

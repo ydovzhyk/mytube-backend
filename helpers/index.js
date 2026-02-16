@@ -6,6 +6,7 @@ const { uploadMakePublic } = require("./firebaseUpload");
 const { runCmd } = require("./runCmd");
 const { transcodeToQualities, TARGET_QUALITIES } = require("./transcodeVideo");
 const { extractTagsFromDescription } = require("./extractTags");
+const { getVideoDurationSec } = require('./getVideoDurationSec')
 
 module.exports = {
   RequestError,
@@ -17,4 +18,5 @@ module.exports = {
   transcodeToQualities,
   TARGET_QUALITIES,
   extractTagsFromDescription,
+  getVideoDurationSec,
 };

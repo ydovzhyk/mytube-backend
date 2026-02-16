@@ -9,31 +9,31 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, tmpDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || '') || '.jpg'
-    cb(null, `banner-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`)
+    cb(null, `image-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`)
   },
 })
 
 function fileFilter(req, file, cb) {
-  // очікуємо тільки поле "banner"
-  if (file.fieldname !== 'banner') {
+  // очікуємо тільки поле "image"
+  if (file.fieldname !== 'image') {
     return cb(Object.assign(new Error('Unexpected field'), { status: 400 }))
   }
 
   if (file.mimetype && file.mimetype.startsWith('image/')) return cb(null, true)
 
   return cb(
-    Object.assign(new Error('Only image files are allowed for banner'), {
+    Object.assign(new Error('Only image files are allowed for image'), {
       status: 400,
     }),
   )
 }
 
-const uploadChannelBanner = multer({
+const uploadImage = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 8 * 1024 * 1024, // банер 8MB
+    fileSize: 8 * 1024 * 1024, // image 8MB
   },
 })
 
-module.exports = { uploadChannelBanner }
+module.exports = { uploadImage }

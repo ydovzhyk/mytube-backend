@@ -1,28 +1,28 @@
-const express = require("express");
-const { ctrlWrapper } = require("../../helpers");
-const ctrl = require("../../controllers/videosContoller");
-const { authorize, validate } = require("../../middlewares");
-const { uploadVideo } = require("../../middlewares/uploadVideo");
-const { schemas } = require("../../models/video");
+const express = require('express')
+const { ctrlWrapper } = require('../../helpers')
+const ctrl = require('../../controllers/videosContoller')
+const { authorize, validate, authorizeOptional } = require('../../middlewares')
+const { uploadVideo } = require('../../middlewares/uploadVideo')
+const { schemas } = require('../../models/video')
 
-const router = express.Router();
+const router = express.Router()
 
-router.get("/", ctrlWrapper(ctrl.getVideosController));
+router.get('/', ctrlWrapper(ctrl.getVideosController))
 
 router.post(
-  "/upload",
+  '/upload',
   authorize,
   uploadVideo.fields([
-    { name: "video", maxCount: 1 },
-    { name: "thumbnail", maxCount: 1 },
+    { name: 'video', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
   ]),
-  ctrlWrapper(ctrl.uploadVideoController)
-);
+  ctrlWrapper(ctrl.uploadVideoController),
+)
 
 router.get(
-  "/channel",
+  '/channel',
   validate(schemas.getChannelVideosQuerySchema),
-  ctrlWrapper(ctrl.getChannelVideoController)
+  ctrlWrapper(ctrl.getChannelVideoController),
 )
 
 router.get(
@@ -31,10 +31,12 @@ router.get(
   ctrlWrapper(ctrl.getChannelVideoController),
 )
 
-router.get(
-  '/picker',
-  authorize,
-  ctrlWrapper(ctrl.getVideosPickerController),
-)
+router.get('/picker', authorize, ctrlWrapper(ctrl.getVideosPickerController))
 
-module.exports = router;
+router.post('/view-count/:id', ctrlWrapper(ctrl.videoViewController))
+
+router.get('/:id/similar', authorizeOptional, ctrlWrapper(ctrl.getSimilarVideosController))
+
+router.get('/:id', authorizeOptional, ctrlWrapper(ctrl.getWatchVideoController))
+
+module.exports = router

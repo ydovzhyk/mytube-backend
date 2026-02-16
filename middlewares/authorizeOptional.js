@@ -6,8 +6,6 @@ const authorizeOptional = async (req, res, next) => {
   const accessToken = req.cookies?.accessToken
   const refreshToken = req.cookies?.refreshToken
 
-  console.log('authorizeOptional middleware:', { accessToken, refreshToken })
-
   req.user = null
   req.authError = null
 
