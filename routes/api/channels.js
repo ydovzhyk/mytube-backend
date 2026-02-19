@@ -18,15 +18,31 @@ router.post(
 )
 
 // 3) Перевірка унікальності handle (blur)
-router.get('/check-handle', ctrlWrapper(ctrl.checkHandleController))
+router.get(
+  '/check-handle',
+  ctrlWrapper(ctrl.checkHandleController)
+)
 
 // 4) Отримати канал по handle (для /channel/@handle)
-router.get('/by-handle/:handle', ctrlWrapper(ctrl.getChannelByHandleController))
+router.get(
+  '/by-handle/:handle',
+  ctrlWrapper(ctrl.getChannelByHandleController)
+)
 
-// 5) Отримати канал по id (публічно)
-router.get('/:id', ctrlWrapper(ctrl.getChannelController))
+// 5) Підписатися / відписатися від каналу
+router.post(
+  '/:id/subscribe',
+  authorize,
+  ctrlWrapper(ctrl.subscribeChannelController)
+)
 
-// 6) Оновити канал (універсально, включно з image через multipart)
+// 6) Отримати канал по id (публічно)
+router.get(
+  '/:id',
+  ctrlWrapper(ctrl.getChannelController)
+)
+
+// 7) Оновити канал (універсально, включно з image через multipart)
 router.patch(
   '/:id',
   authorize,
@@ -34,7 +50,11 @@ router.patch(
   ctrlWrapper(ctrl.updateChannelController),
 )
 
-// 7) Видалити канал
-router.delete('/:id', authorize, ctrlWrapper(ctrl.deleteChannelController))
+// 8) Видалити канал
+router.delete(
+  '/:id',
+  authorize,
+  ctrlWrapper(ctrl.deleteChannelController)
+)
 
 module.exports = router

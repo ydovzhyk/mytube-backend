@@ -31,12 +31,34 @@ router.get(
   ctrlWrapper(ctrl.getChannelVideoController),
 )
 
-router.get('/picker', authorize, ctrlWrapper(ctrl.getVideosPickerController))
+router.get(
+  '/picker',
+  authorize,
+  ctrlWrapper(ctrl.getVideosPickerController)
+)
 
-router.post('/view-count/:id', ctrlWrapper(ctrl.videoViewController))
+router.post(
+  '/view-count/:id',
+  ctrlWrapper(ctrl.videoViewController)
+)
 
-router.get('/:id/similar', authorizeOptional, ctrlWrapper(ctrl.getSimilarVideosController))
+router.get(
+  '/:id/similar',
+  authorizeOptional,
+  ctrlWrapper(ctrl.getSimilarVideosController)
+)
 
-router.get('/:id', authorizeOptional, ctrlWrapper(ctrl.getWatchVideoController))
+router.post(
+  '/:id/react',
+  authorizeOptional,
+  ctrlWrapper(ctrl.reactVideoController),
+)
+
+router.get(
+  '/:id',
+  authorizeOptional,
+  validate(schemas.reactVideoSchema),
+  ctrlWrapper(ctrl.getWatchVideoController)
+)
 
 module.exports = router

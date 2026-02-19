@@ -12,6 +12,15 @@ const watchHistoryItemSchema = new Schema(
   { _id: false },
 )
 
+const videoReactionSchema = new Schema(
+  {
+    videoId: { type: Schema.Types.ObjectId, ref: 'video', required: true },
+    value: { type: Number, enum: [1, -1], required: true },
+    reactedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+)
+
 const userSchema = new Schema(
   {
     name: {
@@ -41,14 +50,17 @@ const userSchema = new Schema(
       type: [{ type: Schema.Types.ObjectId, ref: 'channel' }],
       default: [],
     },
+
     watchHistory: {
       type: [watchHistoryItemSchema],
       default: [],
     },
-    likedVideos: {
-      type: [{ type: Schema.Types.ObjectId, ref: 'video' }],
+
+    videoReactions: {
+      type: [videoReactionSchema],
       default: [],
     },
+
     likedChannels: {
       type: [{ type: Schema.Types.ObjectId, ref: 'channel' }],
       default: [],
@@ -66,8 +78,6 @@ const userSchema = new Schema(
 )
 
 userSchema.post('save', handleSaveErrors)
-
-userSchema.index({ email: 1 }, { unique: true })
 
 const User = model('user', userSchema)
 
@@ -94,15 +104,33 @@ const editUserSchema = Joi.object({
 
 const updateUserSchema = Joi.object({
   watchedVideoId: Joi.string().hex().length(24).optional(),
-  likedVideoId: Joi.string().hex().length(24).optional(),
-  unlikedVideoId: Joi.string().hex().length(24).optional(),
+  reactVideoId: Joi.string().hex().length(24).optional(),
+  reactValue: Joi.number().valid(1, -1, 0).optional(),
+
   savedPlaylistId: Joi.string().hex().length(24).optional(),
   unsavedPlaylistId: Joi.string().hex().length(24).optional(),
   likedChannelId: Joi.string().hex().length(24).optional(),
   unlikedChannelId: Joi.string().hex().length(24).optional(),
   subscribedChannelId: Joi.string().hex().length(24).optional(),
   unsubscribedChannelId: Joi.string().hex().length(24).optional(),
+
+  likedVideoId: Joi.string().hex().length(24).optional(),
+  unlikedVideoId: Joi.string().hex().length(24).optional(),
 })
+  .or(
+    'watchedVideoId',
+    'reactVideoId',
+    'savedPlaylistId',
+    'unsavedPlaylistId',
+    'likedChannelId',
+    'unlikedChannelId',
+    'subscribedChannelId',
+    'unsubscribedChannelId',
+    'likedVideoId',
+    'unlikedVideoId',
+  )
+  .and('reactVideoId', 'reactValue')
+
 
 const schemas = {
   registerSchema,
@@ -111,8 +139,8 @@ const schemas = {
   editUserSchema,
   updateUserSchema,
 }
+
 module.exports = {
   User,
   schemas,
 }
-

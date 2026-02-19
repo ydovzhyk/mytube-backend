@@ -1,6 +1,6 @@
 const fs = require('fs/promises')
 const path = require('path')
-
+const { Types } = require('mongoose')
 const { Channel, schemas } = require('../models/channel')
 const { User } = require('../models/user')
 const { RequestError } = require('../helpers')
@@ -297,6 +297,82 @@ const deleteChannelController = async (req, res) => {
   res.json({ message: 'Channel deleted' })
 }
 
+async function subscribeChannelController(req, res, next) {
+  try {
+    const userId = req.user?._id
+    if (!userId) throw RequestError(401, 'Unauthorized')
+
+    const channelId = req.params.id
+    if (!Types.ObjectId.isValid(channelId))
+      throw RequestError(400, 'Invalid channel id')
+
+    const ch = await Channel.findById(channelId)
+      .select('_id ownerId subscribersCount')
+      .lean()
+    if (!ch) throw RequestError(404, 'Channel not found')
+
+    if (String(ch.ownerId) === String(userId)) {
+      throw RequestError(403, 'Channel owner cannot subscribe to own channel')
+    }
+
+    // user state
+    const userLean = await User.findById(userId)
+      .select('_id subscribedChannels')
+      .lean()
+    if (!userLean) throw RequestError(404, 'User not found')
+
+    const subs = Array.isArray(userLean.subscribedChannels)
+      ? userLean.subscribedChannels
+      : []
+    const already = subs.some((x) => String(x) === String(channelId))
+
+    if (already) {
+      // UNSUBSCRIBE
+      await Promise.all([
+        User.updateOne(
+          { _id: userId },
+          { $pull: { subscribedChannels: channelId } },
+        ),
+        Channel.findOneAndUpdate(
+          { _id: channelId, subscribers: userId },
+          { $pull: { subscribers: userId }, $inc: { subscribersCount: -1 } },
+          { new: true, projection: { subscribersCount: 1 } },
+        ).lean(),
+      ])
+
+      const updatedUser = await User.findById(userId).lean()
+      if (!updatedUser) throw RequestError(500, 'User disappeared after update')
+
+      return res.json({
+        subscribed: false,
+        user: updatedUser,
+      })
+    }
+
+    // SUBSCRIBE
+    await Promise.all([
+      User.updateOne(
+        { _id: userId },
+        { $addToSet: { subscribedChannels: channelId } },
+      ),
+      Channel.findOneAndUpdate(
+        { _id: channelId, subscribers: { $ne: userId } },
+        { $addToSet: { subscribers: userId }, $inc: { subscribersCount: 1 } },
+        { new: true, projection: { subscribersCount: 1 } },
+      ).lean(),
+    ])
+
+    const updatedUser = await User.findById(userId).lean()
+    if (!updatedUser) throw RequestError(500, 'User disappeared after update')
+
+    return res.json({
+      subscribed: true,
+      user: updatedUser,
+    })
+  } catch (e) {
+    next(e)
+  }
+}
 
 module.exports = {
   getMyChannelsController,
@@ -306,4 +382,5 @@ module.exports = {
   createChannelController,
   updateChannelController,
   deleteChannelController,
+  subscribeChannelController,
 }

@@ -6,7 +6,9 @@ const authenticateRefresh = async (req, res, next) => {
   const refreshToken = req.cookies?.refreshToken
 
   if (!refreshToken) {
-    return res.status(403).json({ code: 'NO_TOKEN', message: 'Please login again' })
+    return res
+      .status(401)
+      .json({ code: 'NO_TOKEN', message: 'Please login again' })
   }
 
   let payload

@@ -21,6 +21,7 @@ const statsSchema = new Schema(
   {
     views: { type: Number, default: 0, min: 0, index: true },
     likes: { type: Number, default: 0, min: 0 },
+    dislikes: { type: Number, default: 0, min: 0 },
     comments: { type: Number, default: 0, min: 0 },
   },
   { _id: false },
@@ -167,9 +168,14 @@ const getChannelVideosQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(50).default(20),
 })
 
+const reactVideoSchema = Joi.object({
+  value: Joi.number().valid(1, -1, 0).required(),
+  visitorId: Joi.string().min(10).max(64).optional(),
+})
+
 module.exports = {
   Video,
-  schemas: { createVideoSchema, updateVideoSchema, getChannelVideosQuerySchema },
+  schemas: { createVideoSchema, updateVideoSchema, getChannelVideosQuerySchema, reactVideoSchema },
   QUALITY_ENUM,
   STATUS_ENUM,
 }

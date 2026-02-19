@@ -1,7 +1,8 @@
 const fs = require('fs')
 const path = require('path')
+const { Types } = require('mongoose')
 const { User } = require('../models/user')
-
+const { Visitor } = require('../models/visitor')
 const { Video, QUALITY_ENUM } = require('../models/video')
 const { Channel } = require('../models/channel')
 const { Playlist } = require('../models/playlist')
@@ -416,12 +417,7 @@ async function getSimilarVideosController(req, res) {
 
   const cursor = String(req.query.cursor || '').trim() || null
   const filter = String(req.query.filter || 'all').trim()
-
-  // watchedIds from query (guest/session)
-  const watchedIdsFromQuery = String(req.query.watchedIds || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const visitorId = String(req.query.visitorId || '').trim()
 
   if (!id) throw RequestError(400, 'Video id is required')
 
@@ -433,26 +429,35 @@ async function getSimilarVideosController(req, res) {
 
   if (!currentVideo) throw RequestError(404, 'Video not found')
 
+  const isWatched = String(filter).toLowerCase() === 'watched'
+
   // -------------------------
   // watchedIds resolve (only for filter=watched)
   // -------------------------
-  let watchedIds = watchedIdsFromQuery
+  let watchedIds = []
 
-  if (
-    String(filter).toLowerCase() === 'watched' &&
-    !watchedIds.length &&
-    userId
-  ) {
-    const user = await User.findById(userId).select('watchHistory').lean()
-    const hist = Array.isArray(user?.watchHistory) ? user.watchHistory : []
-    watchedIds = hist.map((x) => String(x?.videoId || '')).filter(Boolean)
+  if (isWatched) {
+    if (userId) {
+      const user = await User.findById(userId).select('watchHistory').lean()
+      const hist = Array.isArray(user?.watchHistory) ? user.watchHistory : []
+      watchedIds = hist.map((x) => String(x?.videoId || '')).filter(Boolean)
+    } else if (visitorId) {
+      const visitor = await Visitor.findOne({ visitorId })
+        .select('watchHistory')
+        .lean()
+      const hist = Array.isArray(visitor?.watchHistory)
+        ? visitor.watchHistory
+        : []
+      watchedIds = hist.map((x) => String(x?.videoId || '')).filter(Boolean)
+    } else {
+      // guest + no visitorId => нічого показати
+      watchedIds = []
+    }
   }
 
   // -------------------------
   // AUTO exclude playlist videos for NON-watched filters
-  // (same logic idea as getWatchVideoController)
   // -------------------------
-  const isWatched = String(filter).toLowerCase() === 'watched'
   let excludeIds = []
 
   if (!isWatched) {
@@ -462,13 +467,12 @@ async function getSimilarVideosController(req, res) {
       ? { $in: ['public', 'unlisted'] }
       : 'public'
 
-    // шукаємо останній плейлист цього каналу, який містить це відео
     const pl = await Playlist.findOne({
       visibility: visibilityMatch,
       channelRef: currentVideo.channelRef,
       'items.videoId': currentVideo._id,
     })
-      .select('items.videoId') // нам не треба тягнути все
+      .select('items.videoId')
       .sort({ updatedAt: -1, _id: -1 })
       .lean()
 
@@ -487,12 +491,12 @@ async function getSimilarVideosController(req, res) {
     cursor,
     filter,
     watchedIds,
-    excludeIds, // ✅ тепер all/related/recent/from_channel завжди без playlist
+    excludeIds,
     excludeInWatched: false,
   })
 
   // ordering watched by history order
-  if (isWatched) {
+  if (isWatched && watchedIds.length) {
     const order = new Map()
     watchedIds.forEach((vid, idx) => order.set(String(vid), idx))
 
@@ -507,6 +511,164 @@ async function getSimilarVideosController(req, res) {
   res.json(result)
 }
 
+function getDelta(oldV, newV) {
+  const delta = { likes: 0, dislikes: 0 }
+  if (oldV === newV) return delta
+  if (oldV === 1) delta.likes -= 1
+  if (oldV === -1) delta.dislikes -= 1
+  if (newV === 1) delta.likes += 1
+  if (newV === -1) delta.dislikes += 1
+  return delta
+}
+
+function normalizeOldValue(found) {
+  const v = Number(found?.value || 0)
+  return v === 1 || v === -1 ? v : 0
+}
+
+async function reactVideoController(req, res, next) {
+  try {
+    const videoId = req.params.id
+    if (!Types.ObjectId.isValid(videoId))
+      throw RequestError(400, 'Invalid video id')
+
+    const { value, visitorId } = req.body
+    const newValue = Number(value) // 1 | -1 | 0
+
+    if (![1, -1, 0].includes(newValue))
+      throw RequestError(400, 'Invalid reaction value')
+
+    const isUser = Boolean(req.user?._id)
+    console.log('User:', isUser)
+    if (!isUser && !visitorId)
+      throw RequestError(400, 'visitorId is required for guests')
+
+    // 1) video exists (+ we need channelRef for owner check + stats update)
+    const videoDoc = await Video.findById(videoId)
+      .select('_id channelRef stats')
+      .lean()
+    if (!videoDoc) throw RequestError(404, 'Video not found')
+
+    // 2) block owner from reacting (only for logged-in)
+    if (isUser) {
+      const ch = await Channel.findById(videoDoc.channelRef)
+        .select('ownerId')
+        .lean()
+      const ownerId = ch?.ownerId ? String(ch.ownerId) : ''
+      const userId = String(req.user._id)
+      if (ownerId && ownerId === userId) {
+        throw RequestError(403, 'Channel owner cannot react to own video')
+      }
+    }
+
+    // 3) read actor (full doc later, but we need reactions to compute delta)
+    const actor = isUser
+      ? await User.findById(req.user._id).select('_id videoReactions').lean()
+      : await Visitor.findOne({ visitorId })
+          .select('_id visitorId videoReactions')
+          .lean()
+
+    if (!actor)
+      throw RequestError(404, isUser ? 'User not found' : 'Visitor not found')
+
+    const reactions = Array.isArray(actor.videoReactions)
+      ? actor.videoReactions
+      : []
+    const found = reactions.find((r) => String(r.videoId) === String(videoId))
+    const oldValue = normalizeOldValue(found)
+
+    const delta = getDelta(oldValue, newValue)
+
+    // 4) update actor reactions
+    if (newValue === 0) {
+      if (isUser) {
+        await User.updateOne(
+          { _id: actor._id },
+          { $pull: { videoReactions: { videoId } } },
+        )
+      } else {
+        await Visitor.updateOne(
+          { _id: actor._id },
+          {
+            $pull: { videoReactions: { videoId } },
+            $set: { lastSeenAt: new Date() },
+          },
+        )
+      }
+    } else {
+      const setObj = {
+        'videoReactions.$.value': newValue,
+        'videoReactions.$.reactedAt': new Date(),
+      }
+
+      const Model = isUser ? User : Visitor
+      const baseQuery = { _id: actor._id, 'videoReactions.videoId': videoId }
+      const baseUpdate = isUser
+        ? { $set: setObj }
+        : { $set: { ...setObj, lastSeenAt: new Date() } }
+
+      const upd1 = await Model.updateOne(baseQuery, baseUpdate)
+
+      if (upd1.matchedCount === 0) {
+        const pushObj = { videoId, value: newValue, reactedAt: new Date() }
+        const upd2 = isUser
+          ? { $push: { videoReactions: pushObj } }
+          : {
+              $push: { videoReactions: pushObj },
+              $set: { lastSeenAt: new Date() },
+            }
+
+        await Model.updateOne({ _id: actor._id }, upd2)
+      }
+    }
+
+    // 5) update video stats
+    const inc = {}
+    if (delta.likes) inc['stats.likes'] = delta.likes
+    if (delta.dislikes) inc['stats.dislikes'] = delta.dislikes
+
+    const video = Object.keys(inc).length
+      ? await Video.findOneAndUpdate(
+          { _id: videoId },
+          { $inc: inc },
+          { new: true, projection: { 'stats.likes': 1, 'stats.dislikes': 1 } },
+        ).lean()
+      : await Video.findById(videoId)
+          .select('stats.likes stats.dislikes')
+          .lean()
+
+    if (!video) throw RequestError(404, 'Video not found')
+
+    // 6) return FULL actor document (what UI needs)
+    const updatedActor = isUser
+      ? await User.findById(actor._id).lean()
+      : await Visitor.findById(actor._id).lean()
+
+    if (!updatedActor) throw RequestError(500, 'Actor disappeared after update')
+
+    const mine = Array.isArray(updatedActor.videoReactions)
+      ? updatedActor.videoReactions.find(
+          (r) => String(r.videoId) === String(videoId),
+        )
+      : null
+
+    const myReaction = normalizeOldValue(mine)
+
+    res.json({
+      videoId,
+      myReaction,
+      stats: {
+        likes: video?.stats?.likes ?? 0,
+        dislikes: video?.stats?.dislikes ?? 0,
+      },
+      actorType: isUser ? 'user' : 'visitor',
+      user: isUser ? updatedActor : null,
+      visitor: !isUser ? updatedActor : null,
+    })
+  } catch (e) {
+    next(e)
+  }
+}
 
 module.exports = {
   uploadVideoController,
@@ -516,4 +678,5 @@ module.exports = {
   videoViewController,
   getWatchVideoController,
   getSimilarVideosController,
+  reactVideoController,
 }
