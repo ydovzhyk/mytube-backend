@@ -44,6 +44,13 @@ const videoSchema = new Schema(
       trim: true,
     },
 
+    ownerId: {
+      type: Types.ObjectId,
+      ref: 'user',
+      required: true,
+      index: true,
+    },
+
     channelRef: {
       type: Types.ObjectId,
       ref: 'channel',
@@ -136,6 +143,7 @@ const videoSchema = new Schema(
   { minimize: false, timestamps: true },
 )
 
+videoSchema.index({ ownerId: 1, createdAt: -1 })
 videoSchema.index({ isPublished: 1, publishedAt: -1, _id: -1 })
 videoSchema.index({ channelRef: 1, createdAt: -1 })
 videoSchema.index({ tags: 1, isPublished: 1, publishedAt: -1 })

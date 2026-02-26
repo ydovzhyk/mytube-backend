@@ -42,12 +42,136 @@ const safeRmdir = async (dir) => {
 // -------------------------
 // Controllers
 // -------------------------
+// async function uploadVideoController(req, res) {
+//   const videoFile = req.files?.video?.[0]
+//   const thumbFile = req.files?.thumbnail?.[0]
+
+//   if (!videoFile) throw RequestError(400, 'Video file is required')
+//   if (!thumbFile) throw RequestError(400, 'Thumbnail file is required')
+
+//   const { title, description = '', channelRef, isPublished } = req.body
+//   if (!title || !channelRef)
+//     throw RequestError(400, 'title and channelRef are required')
+
+//   const published = Boolean(isPublished === 'true' || isPublished === true)
+
+//   // файли (оголосили ОДИН раз)
+//   const inputPath = videoFile.path
+//   const thumbPath = thumbFile.path
+
+//   // 0) fetch channel and build snapshot
+//   const channel = await Channel.findById(channelRef).lean()
+//   if (!channel) throw RequestError(404, 'Channel not found')
+
+//   const channelSnapshot = {
+//     _id: channel._id,
+//     handle: String(channel.handle || '')
+//       .trim()
+//       .toLowerCase(),
+//     title: String(channel.title || '').trim(),
+//     name: String(channel.name || '').trim(),
+//     avatarUrl: String(channel.avatarUrl || ''),
+//   }
+
+//   if (!channelSnapshot.handle) throw RequestError(400, 'Channel has no handle')
+
+//   // 1) duration ДО create (поки файл існує)
+//   let durationSec = 0
+//   try {
+//     durationSec = await getVideoDurationSec(inputPath)
+//   } catch (e) {
+//     throw RequestError(400, 'Cannot read video duration')
+//   }
+
+//   // 2) create Video in processing
+//   const doc = await Video.create({
+//     title,
+//     description,
+//     channelRef: channel._id,
+//     channelSnapshot,
+//     isPublished: published,
+//     publishedAt: published ? new Date() : null,
+//     status: 'processing',
+//     thumbnailUrl: '',
+//     tags: extractTagsFromDescription(description),
+//     stats: { views: 0, likes: 0, comments: 0 },
+//     duration: durationSec,
+//   })
+
+//   const outDir = path.join(process.cwd(), 'tmp', 'transcoded', String(doc._id))
+
+//   try {
+//     const thumbExt = path.extname(thumbFile.originalname || '') || '.jpg'
+//     const thumbDest = `videos/${doc._id}/thumbnail${thumbExt}`
+//     const thumbContentType = thumbFile.mimetype || 'image/jpeg'
+
+//     const thumbUploadPromise = uploadMakePublic(
+//       thumbPath,
+//       thumbDest,
+//       thumbContentType,
+//     )
+//     const transcodePromise = transcodeToQualities(inputPath, outDir)
+
+//     const [thumbnailUrl, filesByQuality] = await Promise.all([
+//       thumbUploadPromise,
+//       transcodePromise,
+//     ])
+
+//     const sources = {}
+//     const qualities = []
+
+//     for (const [q, localPath] of Object.entries(filesByQuality)) {
+//       if (!QUALITY_ENUM.includes(q)) continue
+//       const dest = `videos/${doc._id}/${q}.mp4`
+//       const url = await uploadMakePublic(localPath, dest, 'video/mp4')
+//       sources[q] = url
+//       qualities.push(q)
+//     }
+
+//     const availableQualities = qualities.sort(
+//       (a, b) => QUALITY_ENUM.indexOf(a) - QUALITY_ENUM.indexOf(b),
+//     )
+//     const maxQuality = pickMaxQuality(availableQualities)
+
+//     doc.status = 'ready'
+//     doc.errorMessage = ''
+//     doc.thumbnailUrl = thumbnailUrl
+//     doc.sources = sources
+//     doc.availableQualities = availableQualities
+//     doc.maxQuality = maxQuality
+
+//     await doc.save()
+
+//     if (doc.isPublished) {
+//       await Channel.updateOne(
+//         { _id: channel._id, videos: { $ne: doc._id } },
+//         { $addToSet: { videos: doc._id }, $inc: { videosCount: 1 } },
+//       )
+//     }
+
+//     return res.status(201).json({ message: 'Video uploaded', video: doc })
+//   } catch (e) {
+//     doc.status = 'failed'
+//     doc.errorMessage = e?.message || 'Upload failed'
+//     await doc.save()
+//     throw RequestError(500, doc.errorMessage)
+//   } finally {
+//     await safeUnlink(inputPath)
+//     await safeUnlink(thumbPath)
+//     await safeRmdir(outDir)
+//   }
+// }
+
 async function uploadVideoController(req, res) {
   const videoFile = req.files?.video?.[0]
   const thumbFile = req.files?.thumbnail?.[0]
 
   if (!videoFile) throw RequestError(400, 'Video file is required')
   if (!thumbFile) throw RequestError(400, 'Thumbnail file is required')
+
+  // ✅ owner is required now
+  const userId = req.user?._id
+  if (!userId) throw RequestError(401, 'Unauthorized')
 
   const { title, description = '', channelRef, isPublished } = req.body
   if (!title || !channelRef)
@@ -75,6 +199,10 @@ async function uploadVideoController(req, res) {
 
   if (!channelSnapshot.handle) throw RequestError(400, 'Channel has no handle')
 
+  // ✅ 0.1) fetch owner and build snapshot (from User)
+  const owner = await User.findById(userId).select('_id name userAvatar').lean()
+  if (!owner) throw RequestError(404, 'User not found')
+
   // 1) duration ДО create (поки файл існує)
   let durationSec = 0
   try {
@@ -87,8 +215,12 @@ async function uploadVideoController(req, res) {
   const doc = await Video.create({
     title,
     description,
+
+    ownerId: owner._id,
+
     channelRef: channel._id,
     channelSnapshot,
+
     isPublished: published,
     publishedAt: published ? new Date() : null,
     status: 'processing',
