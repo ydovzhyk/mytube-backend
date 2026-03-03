@@ -21,6 +21,15 @@ const videoReactionSchema = new Schema(
   { _id: false },
 )
 
+const commentReactionSchema = new Schema(
+  {
+    commentId: { type: Schema.Types.ObjectId, ref: 'comment', required: true },
+    value: { type: Number, enum: [1, -1], required: true },
+    reactedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+)
+
 const userSchema = new Schema(
   {
     name: {
@@ -50,17 +59,18 @@ const userSchema = new Schema(
       type: [{ type: Schema.Types.ObjectId, ref: 'channel' }],
       default: [],
     },
-
     watchHistory: {
       type: [watchHistoryItemSchema],
       default: [],
     },
-
     videoReactions: {
       type: [videoReactionSchema],
       default: [],
     },
-
+    commentReactions: {
+      type: [commentReactionSchema],
+      default: [],
+    },
     likedChannels: {
       type: [{ type: Schema.Types.ObjectId, ref: 'channel' }],
       default: [],

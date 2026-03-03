@@ -11,6 +11,7 @@ const videosRouter = require('./routes/api/videos')
 const channelsRouter = require('./routes/api/channels')
 const playlistsRouter = require('./routes/api/playlists')
 const visitorRouter = require('./routes/api/visitor')
+const commentsRouter = require('./routes/api/comments')
 
 const { NODE_ENV } = process.env
 
@@ -46,6 +47,7 @@ app.use('/api/videos', videosRouter)
 app.use('/api/channels', channelsRouter)
 app.use('/api/playlists', playlistsRouter)
 app.use('/api/visitor', visitorRouter)
+app.use('/api/comments', commentsRouter)
 /** Google OAuth session (only for /api/google) **/
 app.use(
   '/api/google',
