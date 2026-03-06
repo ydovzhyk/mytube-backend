@@ -147,6 +147,13 @@ videoSchema.index({ ownerId: 1, createdAt: -1 })
 videoSchema.index({ isPublished: 1, publishedAt: -1, _id: -1 })
 videoSchema.index({ channelRef: 1, createdAt: -1 })
 videoSchema.index({ tags: 1, isPublished: 1, publishedAt: -1 })
+videoSchema.index({ isPublished: 1, 'stats.views': -1, _id: -1 })
+
+videoSchema.index({
+  title: 'text',
+  description: 'text',
+  tags: 'text',
+})
 
 videoSchema.post('save', handleSaveErrors)
 
@@ -165,8 +172,6 @@ const updateVideoSchema = Joi.object({
   isPublished: Joi.boolean().optional(),
 }).min(1)
 
-
-
 const getChannelVideosQuerySchema = Joi.object({
   channelId: Joi.string().pattern(objectIdRegex).required(),
   publishedOnly: Joi.boolean().truthy('true').falsy('false').optional(),
@@ -176,6 +181,17 @@ const getChannelVideosQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(50).default(20),
 })
 
+const getSearchVideosQuerySchema = Joi.object({
+  q: Joi.string().trim().max(120).allow('').default(''),
+  tag: Joi.string().trim().max(60).allow('').optional(),
+  sort: Joi.string()
+    .valid('relevance', 'latest', 'popular')
+    .default('relevance'),
+  cursor: Joi.string().allow('').optional(),
+  limit: Joi.number().integer().min(1).max(50).default(12),
+  visitorId: Joi.string().min(10).max(64).optional(),
+})
+
 const reactVideoSchema = Joi.object({
   value: Joi.number().valid(1, -1, 0).required(),
   visitorId: Joi.string().min(10).max(64).optional(),
@@ -183,7 +199,13 @@ const reactVideoSchema = Joi.object({
 
 module.exports = {
   Video,
-  schemas: { createVideoSchema, updateVideoSchema, getChannelVideosQuerySchema, reactVideoSchema },
+  schemas: {
+    createVideoSchema,
+    updateVideoSchema,
+    getChannelVideosQuerySchema,
+    getSearchVideosQuerySchema,
+    reactVideoSchema,
+  },
   QUALITY_ENUM,
   STATUS_ENUM,
 }

@@ -9,6 +9,13 @@ const router = express.Router()
 
 router.get('/', ctrlWrapper(ctrl.getVideosController))
 
+router.get(
+  '/search',
+  authorizeOptional,
+  validate(schemas.getSearchVideosQuerySchema),
+  ctrlWrapper(ctrl.searchVideosController),
+)
+
 router.post(
   '/upload',
   authorize,

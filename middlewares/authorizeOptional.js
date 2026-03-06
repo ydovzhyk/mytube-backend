@@ -9,22 +9,48 @@ const authorizeOptional = async (req, res, next) => {
   req.user = null
   req.authError = null
 
+  // 1) no access
   if (!accessToken) {
-    if (refreshToken) req.authError = 'missing'
+    if (refreshToken) {
+      return res.status(401).json({
+        message: 'Access token missing',
+        code: 'ACCESS_NEED_REFRESH',
+      })
+    }
     return next()
   }
 
   try {
     const payload = jwt.verify(accessToken, SECRET_KEY)
     const user = await User.findById(payload.id)
-    req.user = user || null
+
+    // token valid, but user not found -> treat as guest
+    if (!user) {
+      req.user = null
+      req.authError = 'not_found'
+      return next()
+    }
+
+    req.user = user
     return next()
   } catch (err) {
-    if (err?.name === 'TokenExpiredError') req.authError = 'expired'
-    else req.authError = 'invalid'
+    if (refreshToken && err?.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        message: 'Access token expired',
+        code: 'ACCESS_NEED_REFRESH',
+      })
+    }
+
+    if (refreshToken && err?.name !== 'TokenExpiredError') {
+      return res.status(401).json({
+        message: 'Access token invalid',
+        code: 'ACCESS_NEED_REFRESH',
+      })
+    }
+
+    req.authError = err?.name === 'TokenExpiredError' ? 'expired' : 'invalid'
     return next()
   }
 }
 
 module.exports = authorizeOptional
-

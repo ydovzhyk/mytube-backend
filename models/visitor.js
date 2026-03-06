@@ -19,6 +19,23 @@ const videoReactionSchema = new Schema(
   { _id: false },
 )
 
+const searchHistoryItemSchema = new Schema(
+  {
+    q: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 120,
+    },
+    at: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false },
+)
+
 const visitorSchema = new Schema(
   {
     visitorId: {
@@ -33,6 +50,8 @@ const visitorSchema = new Schema(
     watchHistory: { type: [watchHistoryItemSchema], default: [] },
 
     videoReactions: { type: [videoReactionSchema], default: [] },
+
+    searchHistory: { type: [searchHistoryItemSchema], default: [] },
 
     lastSeenAt: { type: Date, default: Date.now },
   },

@@ -39,6 +39,81 @@ const safeRmdir = async (dir) => {
   } catch {}
 }
 
+const SEARCH_HISTORY_LIMIT = 30
+
+function normalizeSearchQuery(v) {
+  return String(v || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+function encodeSearchCursor(payload) {
+  try {
+    return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  } catch {
+    return null
+  }
+}
+
+function decodeSearchCursor(cursor) {
+  try {
+    if (!cursor) return null
+    const raw = Buffer.from(String(cursor), 'base64url').toString('utf8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function escapeRegex(str) {
+  return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function buildSearchHistory(nextQ, prev = []) {
+  const q = normalizeSearchQuery(nextQ)
+  if (q.length < 2) return Array.isArray(prev) ? prev : []
+
+  const lower = q.toLowerCase()
+  const list = Array.isArray(prev) ? prev : []
+
+  const filtered = list.filter(
+    (it) => normalizeSearchQuery(it?.q).toLowerCase() !== lower,
+  )
+
+  return [{ q, at: new Date() }, ...filtered].slice(0, SEARCH_HISTORY_LIMIT)
+}
+
+async function saveSearchHistory({ user, visitorId, q }) {
+  const normalizedQ = normalizeSearchQuery(q)
+  if (normalizedQ.length < 2) {
+    return { user: null, visitor: null }
+  }
+
+  if (user?._id) {
+    const doc = await User.findById(user._id)
+    if (!doc) return { user: null, visitor: null }
+
+    doc.searchHistory = buildSearchHistory(normalizedQ, doc.searchHistory)
+    await doc.save()
+
+    const updatedUser = await User.findById(user._id).lean()
+    return { user: updatedUser, visitor: null }
+  }
+
+  if (visitorId) {
+    const doc = await Visitor.findOne({ visitorId })
+    if (!doc) return { user: null, visitor: null }
+
+    doc.searchHistory = buildSearchHistory(normalizedQ, doc.searchHistory)
+    await doc.save()
+
+    const updatedVisitor = await Visitor.findOne({ visitorId }).lean()
+    return { user: null, visitor: updatedVisitor }
+  }
+
+  return { user: null, visitor: null }
+}
+
 // -------------------------
 // Controllers
 // -------------------------
@@ -49,7 +124,7 @@ async function uploadVideoController(req, res) {
   if (!videoFile) throw RequestError(400, 'Video file is required')
   if (!thumbFile) throw RequestError(400, 'Thumbnail file is required')
 
-  // ✅ owner is required now
+  // owner is required now
   const userId = req.user?._id
   if (!userId) throw RequestError(401, 'Unauthorized')
 
@@ -79,7 +154,7 @@ async function uploadVideoController(req, res) {
 
   if (!channelSnapshot.handle) throw RequestError(400, 'Channel has no handle')
 
-  // ✅ 0.1) fetch owner and build snapshot (from User)
+  //  0.1) fetch owner and build snapshot (from User)
   const owner = await User.findById(userId).select('_id name userAvatar').lean()
   if (!owner) throw RequestError(404, 'User not found')
 
@@ -682,6 +757,226 @@ async function reactVideoController(req, res, next) {
   }
 }
 
+async function searchVideosController(req, res, next) {
+  try {
+    const q = normalizeSearchQuery(req.query.q)
+    const tag = normalizeSearchQuery(req.query.tag).toLowerCase()
+    const sort = String(req.query.sort || 'relevance')
+      .trim()
+      .toLowerCase()
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12))
+    const cursor = String(req.query.cursor || '').trim()
+    const visitorId = String(req.query.visitorId || '').trim()
+
+    if (!q && !tag) {
+      return res.json({
+        items: [],
+        hasMore: false,
+        nextCursor: null,
+        user: null,
+        visitor: null,
+      })
+    }
+
+    const baseMatch = {
+      isPublished: true,
+      status: 'ready',
+    }
+
+    if (tag) {
+      baseMatch.tags = tag
+    }
+
+    // -------------------------
+    // Save history (side effect)
+    // only for real text search q
+    // -------------------------
+    let updatedUser = null
+    let updatedVisitor = null
+
+    if (q.length >= 2) {
+      const updated = await saveSearchHistory({
+        user: req.user,
+        visitorId,
+        q,
+      })
+
+      updatedUser = updated.user
+      updatedVisitor = updated.visitor
+    }
+
+    // -------------------------
+    // RELEVANCE via $text
+    // -------------------------
+    if (sort === 'relevance' && q.length >= 2) {
+      const cursorObj = decodeSearchCursor(cursor)
+
+      const pipeline = [
+        {
+          $match: {
+            ...baseMatch,
+            $text: { $search: q },
+          },
+        },
+        {
+          $addFields: {
+            score: { $meta: 'textScore' },
+          },
+        },
+      ]
+
+      if (
+        cursorObj &&
+        typeof cursorObj.score === 'number' &&
+        Types.ObjectId.isValid(cursorObj.id)
+      ) {
+        pipeline.push({
+          $match: {
+            $or: [
+              { score: { $lt: cursorObj.score } },
+              {
+                $and: [
+                  { score: cursorObj.score },
+                  { _id: { $lt: new Types.ObjectId(cursorObj.id) } },
+                ],
+              },
+            ],
+          },
+        })
+      }
+
+      pipeline.push(
+        {
+          $sort: {
+            score: -1,
+            _id: -1,
+          },
+        },
+        { $limit: limit + 1 },
+      )
+
+      const docs = await Video.aggregate(pipeline)
+      const hasMore = docs.length > limit
+      const items = hasMore ? docs.slice(0, limit) : docs
+
+      let nextCursor = null
+      if (hasMore && items.length) {
+        const last = items[items.length - 1]
+        nextCursor = encodeSearchCursor({
+          score: Number(last.score || 0),
+          id: String(last._id),
+        })
+      }
+
+      return res.json({
+        items,
+        hasMore,
+        nextCursor,
+        user: updatedUser,
+        visitor: updatedVisitor,
+      })
+    }
+
+    // -------------------------
+    // LATEST / POPULAR
+    // also fallback when q is too short but tag exists
+    // -------------------------
+    const findFilter = { ...baseMatch }
+
+    if (q.length >= 2) {
+      const rx = new RegExp(escapeRegex(q), 'i')
+      findFilter.$or = [{ title: rx }, { description: rx }, { tags: rx }]
+    }
+
+    let sortObj = { publishedAt: -1, _id: -1 }
+    let cursorFilter = null
+
+    if (sort === 'popular') {
+      sortObj = { 'stats.views': -1, _id: -1 }
+
+      const cursorObj = decodeSearchCursor(cursor)
+      if (
+        cursorObj &&
+        Number.isFinite(Number(cursorObj.views)) &&
+        Types.ObjectId.isValid(cursorObj.id)
+      ) {
+        cursorFilter = {
+          $or: [
+            { 'stats.views': { $lt: Number(cursorObj.views) } },
+            {
+              'stats.views': Number(cursorObj.views),
+              _id: { $lt: new Types.ObjectId(cursorObj.id) },
+            },
+          ],
+        }
+      }
+    } else {
+      // latest
+      const cursorObj = decodeSearchCursor(cursor)
+      if (
+        cursorObj &&
+        cursorObj.publishedAt &&
+        Types.ObjectId.isValid(cursorObj.id)
+      ) {
+        const publishedAtDate = new Date(cursorObj.publishedAt)
+        if (!Number.isNaN(publishedAtDate.getTime())) {
+          cursorFilter = {
+            $or: [
+              { publishedAt: { $lt: publishedAtDate } },
+              {
+                publishedAt: publishedAtDate,
+                _id: { $lt: new Types.ObjectId(cursorObj.id) },
+              },
+            ],
+          }
+        }
+      }
+    }
+
+    const finalFilter = cursorFilter
+      ? {
+          ...findFilter,
+          $and: [cursorFilter],
+        }
+      : findFilter
+
+    const docs = await Video.find(finalFilter)
+      .sort(sortObj)
+      .limit(limit + 1)
+      .lean()
+
+    const hasMore = docs.length > limit
+    const items = hasMore ? docs.slice(0, limit) : docs
+
+    let nextCursor = null
+    if (hasMore && items.length) {
+      const last = items[items.length - 1]
+
+      if (sort === 'popular') {
+        nextCursor = encodeSearchCursor({
+          views: Number(last?.stats?.views || 0),
+          id: String(last._id),
+        })
+      } else {
+        nextCursor = encodeSearchCursor({
+          publishedAt: last?.publishedAt || last?.createdAt || null,
+          id: String(last._id),
+        })
+      }
+    }
+
+    res.json({
+      items,
+      hasMore,
+      nextCursor,
+      user: updatedUser,
+      visitor: updatedVisitor,
+    })
+  } catch (e) {
+    next(e)
+  }
+}
+
 module.exports = {
   uploadVideoController,
   getVideosController,
@@ -691,4 +986,5 @@ module.exports = {
   getWatchVideoController,
   getSimilarVideosController,
   reactVideoController,
+  searchVideosController,
 }

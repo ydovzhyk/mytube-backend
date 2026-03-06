@@ -30,6 +30,23 @@ const commentReactionSchema = new Schema(
   { _id: false },
 )
 
+const searchHistoryItemSchema = new Schema(
+  {
+    q: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 120,
+    },
+    at: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false },
+)
+
 const userSchema = new Schema(
   {
     name: {
@@ -69,6 +86,10 @@ const userSchema = new Schema(
     },
     commentReactions: {
       type: [commentReactionSchema],
+      default: [],
+    },
+    searchHistory: {
+      type: [searchHistoryItemSchema],
       default: [],
     },
     likedChannels: {
@@ -140,7 +161,6 @@ const updateUserSchema = Joi.object({
     'unlikedVideoId',
   )
   .and('reactVideoId', 'reactValue')
-
 
 const schemas = {
   registerSchema,
