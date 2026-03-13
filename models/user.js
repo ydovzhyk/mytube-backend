@@ -47,6 +47,32 @@ const searchHistoryItemSchema = new Schema(
   { _id: false },
 )
 
+const myPlaylistRefSchema = new Schema(
+  {
+    playlistId: {
+      type: Schema.Types.ObjectId,
+      ref: 'myPlaylist',
+      required: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 120,
+    },
+    videoIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: 'video' }],
+      default: [],
+    },
+    at: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false },
+)
+
 const userSchema = new Schema(
   {
     name: {
@@ -98,6 +124,10 @@ const userSchema = new Schema(
     },
     savedPlaylists: {
       type: [{ type: Schema.Types.ObjectId, ref: 'playlist' }],
+      default: [],
+    },
+    myPlaylists: {
+      type: [myPlaylistRefSchema],
       default: [],
     },
     subscribedChannels: {

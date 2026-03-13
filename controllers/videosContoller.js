@@ -767,6 +767,7 @@ async function searchVideosController(req, res, next) {
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12))
     const cursor = String(req.query.cursor || '').trim()
     const visitorId = String(req.query.visitorId || '').trim()
+    const inMyPlaylists = String(req.query.inMyPlaylists || '').trim()
 
     if (!q && !tag) {
       return res.json({
@@ -778,6 +779,28 @@ async function searchVideosController(req, res, next) {
       })
     }
 
+    let excludedVideoIds = []
+
+    if (inMyPlaylists === '0' && req.user?._id) {
+      const freshUser = await User.findById(req.user._id)
+        .select('myPlaylists.videoIds')
+        .lean()
+
+      const rawIds = Array.isArray(freshUser?.myPlaylists)
+        ? freshUser.myPlaylists.flatMap((pl) =>
+            Array.isArray(pl?.videoIds) ? pl.videoIds : [],
+          )
+        : []
+
+      excludedVideoIds = Array.from(
+        new Set(
+          rawIds
+            .map((id) => String(id || '').trim())
+            .filter((id) => Types.ObjectId.isValid(id)),
+        ),
+      ).map((id) => new Types.ObjectId(id))
+    }
+
     const baseMatch = {
       isPublished: true,
       status: 'ready',
@@ -787,10 +810,10 @@ async function searchVideosController(req, res, next) {
       baseMatch.tags = tag
     }
 
-    // -------------------------
-    // Save history (side effect)
-    // only for real text search q
-    // -------------------------
+    if (excludedVideoIds.length) {
+      baseMatch._id = { $nin: excludedVideoIds }
+    }
+
     let updatedUser = null
     let updatedVisitor = null
 
@@ -805,9 +828,6 @@ async function searchVideosController(req, res, next) {
       updatedVisitor = updated.visitor
     }
 
-    // -------------------------
-    // RELEVANCE via $text
-    // -------------------------
     if (sort === 'relevance' && q.length >= 2) {
       const cursorObj = decodeSearchCursor(cursor)
 
@@ -877,10 +897,6 @@ async function searchVideosController(req, res, next) {
       })
     }
 
-    // -------------------------
-    // LATEST / POPULAR
-    // also fallback when q is too short but tag exists
-    // -------------------------
     const findFilter = { ...baseMatch }
 
     if (q.length >= 2) {
@@ -910,8 +926,29 @@ async function searchVideosController(req, res, next) {
           ],
         }
       }
+    } else if (sort === 'oldest') {
+      sortObj = { publishedAt: 1, _id: 1 }
+
+      const cursorObj = decodeSearchCursor(cursor)
+      if (
+        cursorObj &&
+        cursorObj.publishedAt &&
+        Types.ObjectId.isValid(cursorObj.id)
+      ) {
+        const publishedAtDate = new Date(cursorObj.publishedAt)
+        if (!Number.isNaN(publishedAtDate.getTime())) {
+          cursorFilter = {
+            $or: [
+              { publishedAt: { $gt: publishedAtDate } },
+              {
+                publishedAt: publishedAtDate,
+                _id: { $gt: new Types.ObjectId(cursorObj.id) },
+              },
+            ],
+          }
+        }
+      }
     } else {
-      // latest
       const cursorObj = decodeSearchCursor(cursor)
       if (
         cursorObj &&

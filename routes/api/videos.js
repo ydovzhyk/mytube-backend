@@ -64,7 +64,6 @@ router.post(
 router.get(
   '/:id',
   authorizeOptional,
-  validate(schemas.reactVideoSchema),
   ctrlWrapper(ctrl.getWatchVideoController)
 )
 

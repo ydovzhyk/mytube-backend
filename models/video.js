@@ -185,11 +185,12 @@ const getSearchVideosQuerySchema = Joi.object({
   q: Joi.string().trim().max(120).allow('').default(''),
   tag: Joi.string().trim().max(60).allow('').optional(),
   sort: Joi.string()
-    .valid('relevance', 'latest', 'popular')
+    .valid('relevance', 'latest', 'oldest', 'popular')
     .default('relevance'),
   cursor: Joi.string().allow('').optional(),
   limit: Joi.number().integer().min(1).max(50).default(12),
   visitorId: Joi.string().min(10).max(64).optional(),
+  inMyPlaylists: Joi.string().valid('0').optional(),
 })
 
 const reactVideoSchema = Joi.object({
