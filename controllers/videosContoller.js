@@ -6,6 +6,7 @@ const { Visitor } = require('../models/visitor')
 const { Video, QUALITY_ENUM } = require('../models/video')
 const { Channel } = require('../models/channel')
 const { Playlist } = require('../models/playlist')
+const { MyPlaylist } = require('../models/my-playlist')
 const { buildSimilarPage } = require('../helpers/video/similar')
 
 const {
@@ -388,9 +389,129 @@ async function videoViewController(req, res) {
   })
 }
 
+// GetWaatchVideoController
+function getPlaylistVisibilityMatch(isLoggedIn) {
+  return isLoggedIn ? { $in: ['public', 'unlisted'] } : 'public'
+}
+
+function getOrderedVideoIdsFromPlaylistItems(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .slice()
+    .sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
+    .map((it) => String(it?.videoId || ''))
+    .filter(Boolean)
+}
+
+async function buildWatchPlaylistPayload(entity, entityType = 'playlist') {
+  const idsInOrder = getOrderedVideoIdsFromPlaylistItems(entity?.items)
+
+  if (!idsInOrder.length) return null
+
+  const vids = await Video.find({
+    _id: { $in: idsInOrder },
+    status: 'ready',
+    isPublished: true,
+  }).lean()
+
+  const map = new Map(vids.map((v) => [String(v._id), v]))
+  const items = idsInOrder.map((vid) => map.get(vid)).filter(Boolean)
+
+  if (!items.length) return null
+
+  return {
+    meta: {
+      _id: entity._id,
+      title: entity.title || '',
+      description: entity.description || '',
+      coverUrl: entity.coverUrl || '',
+      entityType,
+    },
+    items,
+  }
+}
+
+async function resolveExplicitWatchPlaylist({ listId, currentVideo, req }) {
+  if (!listId || !Types.ObjectId.isValid(listId)) return null
+
+  const isLoggedIn = Boolean(req.user?._id)
+  const visibilityMatch = getPlaylistVisibilityMatch(isLoggedIn)
+
+  const publicPlaylist = await Playlist.findOne({
+    _id: listId,
+    visibility: visibilityMatch,
+    'items.videoId': currentVideo._id,
+  }).lean()
+
+  if (publicPlaylist) {
+    return {
+      entity: publicPlaylist,
+      entityType: 'playlist',
+      source: 'explicit',
+    }
+  }
+
+  if (req.user?._id) {
+    const myPlaylist = await MyPlaylist.findOne({
+      _id: listId,
+      ownerId: req.user._id,
+      'items.videoId': currentVideo._id,
+    }).lean()
+
+    if (myPlaylist) {
+      return {
+        entity: myPlaylist,
+        entityType: 'myPlaylist',
+        source: 'explicit',
+      }
+    }
+  }
+
+  return null
+}
+
+async function resolveAutoWatchPlaylist({ currentVideo, req }) {
+  const isLoggedIn = Boolean(req.user?._id)
+  const visibilityMatch = getPlaylistVisibilityMatch(isLoggedIn)
+
+  const publicPlaylist = await Playlist.findOne({
+    visibility: visibilityMatch,
+    channelRef: currentVideo.channelRef,
+    'items.videoId': currentVideo._id,
+  })
+    .sort({ updatedAt: -1, _id: -1 })
+    .lean()
+
+  if (publicPlaylist) {
+    return {
+      entity: publicPlaylist,
+      entityType: 'playlist',
+      source: 'auto',
+    }
+  }
+
+  if (req.user?._id) {
+    const myPlaylist = await MyPlaylist.findOne({
+      ownerId: req.user._id,
+      'items.videoId': currentVideo._id,
+    })
+      .sort({ updatedAt: -1, _id: -1 })
+      .lean()
+
+    if (myPlaylist) {
+      return {
+        entity: myPlaylist,
+        entityType: 'myPlaylist',
+        source: 'auto',
+      }
+    }
+  }
+
+  return null
+}
 async function getWatchVideoController(req, res) {
   const { id } = req.params
   const filter = String(req.query.filter || 'all').trim()
+  const list = String(req.query.list || '').trim()
 
   if (!id) throw RequestError(400, 'Video id is required')
 
@@ -403,70 +524,48 @@ async function getWatchVideoController(req, res) {
 
   if (!currentVideo) throw RequestError(404, 'Video not found')
 
-  // 2) AUTO playlist context (no list param anymore)
+  // 2) playlist context
   let playlistItems = []
   let playlistMeta = null
   let usedListId = null
+  let playlistSource = null
+  let playlistEntityType = null
 
-  const isLoggedIn = Boolean(req.user?._id)
+  let resolved = null
 
-  // guest: only public
-  // logged-in: allow public + unlisted (optional; if you don't need unlisted -> remove $in)
-  const visibilityMatch = isLoggedIn
-    ? { $in: ['public', 'unlisted'] }
-    : 'public'
-
-  const buildPlaylistPayload = async (pl) => {
-    const idsInOrder = (pl.items || [])
-      .slice()
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-      .map((it) => String(it.videoId || ''))
-      .filter(Boolean)
-
-    if (!idsInOrder.length) return null
-
-    const vids = await Video.find({
-      _id: { $in: idsInOrder },
-      status: 'ready',
-      isPublished: true,
-    }).lean()
-
-    const map = new Map(vids.map((v) => [String(v._id), v]))
-    const items = idsInOrder.map((vid) => map.get(vid)).filter(Boolean)
-
-    if (!items.length) return null
-
-    return {
-      meta: {
-        _id: pl._id,
-        title: pl.title || '',
-        description: pl.description || '',
-        coverUrl: pl.coverUrl || '',
-      },
-      items,
-    }
+  // explicit list from query has priority
+  if (list) {
+    resolved = await resolveExplicitWatchPlaylist({
+      listId: list,
+      currentVideo,
+      req,
+    })
   }
 
-  const pl = await Playlist.findOne({
-    visibility: visibilityMatch,
-    channelRef: currentVideo.channelRef,
-    'items.videoId': currentVideo._id,
-  })
-    .sort({ updatedAt: -1, _id: -1 })
-    .lean()
+  // fallback to old auto-detection
+  if (!resolved) {
+    resolved = await resolveAutoWatchPlaylist({
+      currentVideo,
+      req,
+    })
+  }
 
-  if (pl) {
-    const payload = await buildPlaylistPayload(pl)
+  if (resolved?.entity) {
+    const payload = await buildWatchPlaylistPayload(
+      resolved.entity,
+      resolved.entityType,
+    )
+
     if (payload) {
       playlistMeta = payload.meta
       playlistItems = payload.items
-      usedListId = String(pl._id)
+      usedListId = String(resolved.entity._id)
+      playlistSource = resolved.source
+      playlistEntityType = resolved.entityType
     }
   }
 
   // 3) similar (first page)
-  // exclude playlist videos for stable UX/paging:
-  // - for watched: DO NOT exclude by default (history should show true watched)
   const playlistIds = Array.isArray(playlistItems)
     ? playlistItems.map((v) => String(v?._id || '')).filter(Boolean)
     : []
@@ -482,7 +581,7 @@ async function getWatchVideoController(req, res) {
     currentVideo,
     cursor: null,
     filter,
-    watchedIds: [], // (watch endpoint doesn't build watched list; watched filter is handled by /similar endpoint)
+    watchedIds: [],
     excludeIds,
     excludeInWatched: false,
   })
@@ -492,7 +591,13 @@ async function getWatchVideoController(req, res) {
   res.json({
     currentVideo,
     playlist: playlistMeta ? { ...playlistMeta, items: playlistItems } : null,
-    playlistContext: usedListId ? { listId: usedListId, source: 'auto' } : null,
+    playlistContext: usedListId
+      ? {
+          listId: usedListId,
+          source: playlistSource || 'auto',
+          entityType: playlistEntityType || 'playlist',
+        }
+      : null,
     similarVideos,
     similar: { hasMore, nextCursor },
   })
@@ -518,9 +623,7 @@ async function getSimilarVideosController(req, res) {
 
   const isWatched = String(filter).toLowerCase() === 'watched'
 
-  // -------------------------
   // watchedIds resolve (only for filter=watched)
-  // -------------------------
   let watchedIds = []
 
   if (isWatched) {
@@ -542,9 +645,7 @@ async function getSimilarVideosController(req, res) {
     }
   }
 
-  // -------------------------
   // AUTO exclude playlist videos for NON-watched filters
-  // -------------------------
   let excludeIds = []
 
   if (!isWatched) {
@@ -570,9 +671,6 @@ async function getSimilarVideosController(req, res) {
     }
   }
 
-  // -------------------------
-  // build page
-  // -------------------------
   const result = await buildSimilarPage({
     currentVideo,
     cursor,
@@ -828,6 +926,7 @@ async function searchVideosController(req, res, next) {
       updatedVisitor = updated.visitor
     }
 
+    // relevance через text index
     if (sort === 'relevance' && q.length >= 2) {
       const cursorObj = decodeSearchCursor(cursor)
 
@@ -897,15 +996,24 @@ async function searchVideosController(req, res, next) {
       })
     }
 
-    const findFilter = { ...baseMatch }
+    // latest / oldest / popular через regex по словах
+    const filterParts = [{ ...baseMatch }]
 
     if (q.length >= 2) {
-      const rx = new RegExp(escapeRegex(q), 'i')
-      findFilter.$or = [{ title: rx }, { description: rx }, { tags: rx }]
+      const terms = q
+        .split(/\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+      for (const term of terms) {
+        const rx = new RegExp(escapeRegex(term), 'i')
+        filterParts.push({
+          $or: [{ title: rx }, { description: rx }, { tags: rx }],
+        })
+      }
     }
 
     let sortObj = { publishedAt: -1, _id: -1 }
-    let cursorFilter = null
 
     if (sort === 'popular') {
       sortObj = { 'stats.views': -1, _id: -1 }
@@ -916,7 +1024,7 @@ async function searchVideosController(req, res, next) {
         Number.isFinite(Number(cursorObj.views)) &&
         Types.ObjectId.isValid(cursorObj.id)
       ) {
-        cursorFilter = {
+        filterParts.push({
           $or: [
             { 'stats.views': { $lt: Number(cursorObj.views) } },
             {
@@ -924,7 +1032,7 @@ async function searchVideosController(req, res, next) {
               _id: { $lt: new Types.ObjectId(cursorObj.id) },
             },
           ],
-        }
+        })
       }
     } else if (sort === 'oldest') {
       sortObj = { publishedAt: 1, _id: 1 }
@@ -936,8 +1044,9 @@ async function searchVideosController(req, res, next) {
         Types.ObjectId.isValid(cursorObj.id)
       ) {
         const publishedAtDate = new Date(cursorObj.publishedAt)
+
         if (!Number.isNaN(publishedAtDate.getTime())) {
-          cursorFilter = {
+          filterParts.push({
             $or: [
               { publishedAt: { $gt: publishedAtDate } },
               {
@@ -945,10 +1054,11 @@ async function searchVideosController(req, res, next) {
                 _id: { $gt: new Types.ObjectId(cursorObj.id) },
               },
             ],
-          }
+          })
         }
       }
     } else {
+      // latest
       const cursorObj = decodeSearchCursor(cursor)
       if (
         cursorObj &&
@@ -956,8 +1066,9 @@ async function searchVideosController(req, res, next) {
         Types.ObjectId.isValid(cursorObj.id)
       ) {
         const publishedAtDate = new Date(cursorObj.publishedAt)
+
         if (!Number.isNaN(publishedAtDate.getTime())) {
-          cursorFilter = {
+          filterParts.push({
             $or: [
               { publishedAt: { $lt: publishedAtDate } },
               {
@@ -965,17 +1076,13 @@ async function searchVideosController(req, res, next) {
                 _id: { $lt: new Types.ObjectId(cursorObj.id) },
               },
             ],
-          }
+          })
         }
       }
     }
 
-    const finalFilter = cursorFilter
-      ? {
-          ...findFilter,
-          $and: [cursorFilter],
-        }
-      : findFilter
+    const finalFilter =
+      filterParts.length === 1 ? filterParts[0] : { $and: filterParts }
 
     const docs = await Video.find(finalFilter)
       .sort(sortObj)
@@ -1002,7 +1109,7 @@ async function searchVideosController(req, res, next) {
       }
     }
 
-    res.json({
+    return res.json({
       items,
       hasMore,
       nextCursor,

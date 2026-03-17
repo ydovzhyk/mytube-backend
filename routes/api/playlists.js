@@ -1,11 +1,17 @@
 const express = require('express')
 const { ctrlWrapper } = require('../../helpers')
-const { authorize, validate } = require('../../middlewares')
+const { authorize, validate, authorizeOptional } = require('../../middlewares')
 const { uploadImage } = require('../../middlewares/uploadImage')
 const ctrl = require('../../controllers/playlistsController')
 const { schemas } = require('../../models/playlist')
 
 const router = express.Router()
+
+router.get(
+  '/search',
+  authorizeOptional,
+  ctrlWrapper(ctrl.searchPlaylistsController),
+)
 
 router.post(
   '/create',
