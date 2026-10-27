@@ -8,6 +8,7 @@ const authorize = async (req, res, next) => {
   if (!accessToken) return res.status(401).json({ message: 'Unauthorized' })
 
   let payload
+  
   try {
     payload = jwt.verify(accessToken, SECRET_KEY)
   } catch {
