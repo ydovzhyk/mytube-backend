@@ -46,6 +46,41 @@ jobs:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: heroku auth:whoami
 
+      - name: Set Heroku config vars
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          PORT: ${{ secrets.PORT }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          REFRESH_SECRET_KEY: ${{ secrets.REFRESH_SECRET_KEY }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          BASE_URL_HEROKU: ${{ secrets.BASE_URL_HEROKU }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          FRONTEND_URL_PROD: ${{ secrets.FRONTEND_URL_PROD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PRIVATE_KEY_ID: ${{ secrets.PRIVATE_KEY_ID }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        run: |
+          heroku config:set \
+            DB_HOST="$DB_HOST" \
+            PORT="$PORT" \
+            SECRET_KEY="$SECRET_KEY" \
+            REFRESH_SECRET_KEY="$REFRESH_SECRET_KEY" \
+            SESSION_SECRET="$SESSION_SECRET" \
+            GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+            GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+            BASE_URL="$BASE_URL" \
+            BASE_URL_HEROKU="$BASE_URL_HEROKU" \
+            FRONTEND_URL="$FRONTEND_URL" \
+            FRONTEND_URL_PROD="$FRONTEND_URL_PROD" \
+            OPENAI_API_KEY="$OPENAI_API_KEY" \
+            PRIVATE_KEY_ID="$PRIVATE_KEY_ID" \
+            PRIVATE_KEY="$PRIVATE_KEY" \
+            -a mytube-server
+
       - name: Login to Heroku Container Registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
