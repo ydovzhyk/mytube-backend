@@ -12,7 +12,6 @@ const authenticateRefresh = async (req, res, next) => {
   }
 
   let payload
-  
   try {
     payload = jwt.verify(refreshToken, REFRESH_SECRET_KEY)
   } catch (err) {

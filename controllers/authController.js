@@ -1,51 +1,56 @@
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const { User } = require('../models/user')
-const { SECRET_KEY, REFRESH_SECRET_KEY } = process.env
 const { RequestError } = require('../helpers')
 
-const isProd = process.env.NODE_ENV === 'production'
+const isProd = () => process.env.NODE_ENV === 'production'
 const WATCH_HISTORY_LIMIT = 200
 
-const COOKIE_BASE = {
+const COOKIE_BASE = () => ({
   httpOnly: true,
-  secure: isProd,
-  sameSite: isProd ? 'none' : 'lax',
+  secure: isProd(),
+  sameSite: isProd() ? 'none' : 'lax',
   path: '/',
-}
+})
 
 const ACCESS_TTL_MS = 2 * 60 * 1000 // 2m
 const REFRESH_TTL_MS = 24 * 60 * 60 * 1000 // 24h
 
 const msToJwt = (ms) => `${Math.floor(ms / 1000)}s`
 
-const ACCESS_COOKIE_OPTIONS = {
-  ...COOKIE_BASE,
+const ACCESS_COOKIE_OPTIONS = () => ({
+  ...COOKIE_BASE(),
   maxAge: ACCESS_TTL_MS,
-}
+})
 
-const REFRESH_COOKIE_OPTIONS = {
-  ...COOKIE_BASE,
+const REFRESH_COOKIE_OPTIONS = () => ({
+  ...COOKIE_BASE(),
   maxAge: REFRESH_TTL_MS,
-}
+})
 
 const setAuthCookies = (res, { accessToken, refreshToken }) => {
-  if (accessToken) res.cookie('accessToken', accessToken, ACCESS_COOKIE_OPTIONS)
-  if (refreshToken) res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS)
+  if (accessToken) res.cookie('accessToken', accessToken, ACCESS_COOKIE_OPTIONS())
+  if (refreshToken) res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS())
 }
 
 const clearAuthCookies = (res) => {
-  res.clearCookie('accessToken', COOKIE_BASE)
-  res.clearCookie('refreshToken', COOKIE_BASE)
+  res.clearCookie('accessToken', COOKIE_BASE())
+  res.clearCookie('refreshToken', COOKIE_BASE())
 }
 
 const signTokens = (userId, { refresh = true } = {}) => {
+  const { SECRET_KEY, REFRESH_SECRET_KEY } = process.env
+  if (!SECRET_KEY) throw new Error('SECRET_KEY is missing')
+  if (refresh && !REFRESH_SECRET_KEY) throw new Error('REFRESH_SECRET_KEY is missing')
+
   const payload = { id: userId.toString() }
 
   const accessToken = jwt.sign(payload, SECRET_KEY, { expiresIn: msToJwt(ACCESS_TTL_MS) })
   if (!refresh) return { accessToken }
 
-  const refreshToken = jwt.sign(payload, REFRESH_SECRET_KEY, { expiresIn: msToJwt(REFRESH_TTL_MS) })
+  const refreshToken = jwt.sign(payload, REFRESH_SECRET_KEY, {
+    expiresIn: msToJwt(REFRESH_TTL_MS),
+  })
   return { accessToken, refreshToken }
 }
 
