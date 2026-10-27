@@ -1,0 +1,11 @@
+node_modules
+.git
+.github
+tmp
+temp
+scripts
+*.md
+.eslintignore
+.eslintrc.js
+nodemon.json
+docker-compose.yml

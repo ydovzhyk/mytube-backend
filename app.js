@@ -22,15 +22,22 @@ const formatsLogger = app.get('env') === 'development' ? 'dev' : 'short'
 app.use(logger(formatsLogger))
 
 /** CORS **/
-const allowedOrigins = [
-  'http://localhost:3000',
-  // 'https://your-frontend-domain.com',
-]
+const normalizeOrigin = (url = '') => String(url).trim().replace(/\/$/, '')
+
+// Local .env → FRONTEND_URL=localhost; prod secrets → FRONTEND_URL_PROD=Vercel
+const allowedOrigins = new Set(
+  [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    normalizeOrigin(process.env.FRONTEND_URL),
+    normalizeOrigin(process.env.FRONTEND_URL_PROD),
+  ].filter(Boolean)
+)
 
 const corsOptions = {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true) // Postman / server-to-server
-    if (allowedOrigins.includes(origin)) return cb(null, true)
+    if (allowedOrigins.has(origin)) return cb(null, true)
     return cb(new Error(`CORS not allowed for origin: ${origin}`), false)
   },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',

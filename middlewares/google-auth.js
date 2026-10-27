@@ -8,11 +8,13 @@ const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, BASE_URL_HEROKU, BASE_URL } =
 
 const { User } = require('../models/user')
 
+const normalizeBaseUrl = (url = '') => String(url).trim().replace(/\/$/, '')
+
 let callbackURL
 if (process.env.NODE_ENV === 'production') {
-  callbackURL = `${BASE_URL_HEROKU}/api/google/callback`
+  callbackURL = `${normalizeBaseUrl(BASE_URL_HEROKU)}/api/google/callback`
 } else {
-  callbackURL = `${BASE_URL}/api/google/callback`
+  callbackURL = `${normalizeBaseUrl(BASE_URL)}/api/google/callback`
 }
 
 const googleParams = {
