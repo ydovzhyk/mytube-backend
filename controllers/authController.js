@@ -273,7 +273,15 @@ const deleteUserController = async (req, res, next) => {
 // GOOGLE AUTH
 const googleAuthController = async (req, res, next) => {
   try {
-    const origin = req.session.origin
+    const origin =
+      req.session?.origin ||
+      process.env.FRONTEND_URL_PROD ||
+      process.env.FRONTEND_URL
+
+    if (!origin || origin === 'undefined') {
+      return res.status(400).json({ message: 'Missing OAuth redirect origin' })
+    }
+
     const { accessToken, refreshToken } = signTokens(req.user._id)
     setAuthCookies(res, { accessToken, refreshToken })
 

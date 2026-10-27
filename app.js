@@ -19,6 +19,11 @@ const { NODE_ENV } = process.env
 const app = express()
 const formatsLogger = app.get('env') === 'development' ? 'dev' : 'short'
 
+// Heroku terminates TLS; needed for secure cookies (session + JWT)
+if (NODE_ENV === 'production') {
+  app.set('trust proxy', 1)
+}
+
 app.use(logger(formatsLogger))
 
 /** CORS **/
@@ -65,6 +70,7 @@ app.use(
     secret: process.env.SESSION_SECRET, // окремий секрет
     resave: false,
     saveUninitialized: false, // не створювати порожні сесії
+    proxy: NODE_ENV === 'production',
     cookie: {
       httpOnly: true,
       secure: NODE_ENV === 'production',

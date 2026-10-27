@@ -7,9 +7,23 @@ const { passport } = require("../../middlewares");
 const router = express.Router();
 
 const rememberOrigin = (req, res, next) => {
-  const { origin } = req.query
-  if (origin) req.session.origin = origin
-  next()
+  const raw = req.query.origin
+  if (!raw) return next()
+
+  // express already decodes query; keep safe if double-encoded
+  let origin = String(raw)
+  try {
+    origin = decodeURIComponent(origin)
+  } catch {
+    // keep as-is
+  }
+
+  req.session.origin = origin
+  // ensure cookie is written before redirect to Google
+  req.session.save((err) => {
+    if (err) return next(err)
+    next()
+  })
 }
 
 router.get(
