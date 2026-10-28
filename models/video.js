@@ -169,8 +169,8 @@ const createVideoSchema = Joi.object({
 const updateVideoSchema = Joi.object({
   title: Joi.string().min(2).max(140).optional(),
   description: Joi.string().max(5000).allow('').optional(),
-  isPublished: Joi.boolean().optional(),
-}).min(1)
+  isPublished: Joi.boolean().truthy('true').falsy('false').optional(),
+})
 
 const getChannelVideosQuerySchema = Joi.object({
   channelId: Joi.string().pattern(objectIdRegex).required(),

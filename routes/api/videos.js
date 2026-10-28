@@ -56,6 +56,22 @@ router.get(
 )
 
 router.get(
+  '/:id/manage',
+  authorize,
+  ctrlWrapper(ctrl.getManageVideoController),
+)
+
+router.patch(
+  '/:id',
+  authorize,
+  uploadVideo.fields([
+    { name: 'video', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
+  ]),
+  ctrlWrapper(ctrl.updateVideoController),
+)
+
+router.get(
   '/:id/similar',
   authorizeOptional,
   ctrlWrapper(ctrl.getSimilarVideosController)
@@ -71,6 +87,12 @@ router.get(
   '/:id',
   authorizeOptional,
   ctrlWrapper(ctrl.getWatchVideoController)
+)
+
+router.delete(
+  '/:id',
+  authorize,
+  ctrlWrapper(ctrl.deleteVideoController),
 )
 
 module.exports = router

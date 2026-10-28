@@ -11,11 +11,13 @@ const { buildSimilarPage } = require('../helpers/video/similar')
 
 const {
   uploadMakePublic,
+  deleteByPublicUrl,
   transcodeToQualities,
   RequestError,
   extractTagsFromDescription,
   getVideoDurationSec,
 } = require('../helpers')
+const { Comment } = require('../models/comment')
 
 // -------------------------
 // Upload helpers
@@ -295,6 +297,127 @@ async function uploadVideoController(req, res) {
   })
 }
 
+function sourcesToObject(sourcesRaw) {
+  if (sourcesRaw instanceof Map) return Object.fromEntries(sourcesRaw)
+  if (sourcesRaw && typeof sourcesRaw === 'object') return sourcesRaw
+  return {}
+}
+
+async function assertOwnedVideo(id, userId) {
+  if (!userId) throw RequestError(401, 'Unauthorized')
+  if (!id || !Types.ObjectId.isValid(id)) {
+    throw RequestError(400, 'Valid video id is required')
+  }
+
+  const video = await Video.findById(id)
+  if (!video) throw RequestError(404, 'Video not found')
+  if (String(video.ownerId) !== String(userId)) {
+    throw RequestError(403, 'Forbidden')
+  }
+  return video
+}
+
+async function applyPublishFlag(video, nextPublished) {
+  const wasPublished = Boolean(video.isPublished)
+  if (wasPublished === nextPublished) return
+
+  video.isPublished = nextPublished
+
+  if (nextPublished) {
+    if (!video.publishedAt) video.publishedAt = new Date()
+    await Channel.updateOne(
+      { _id: video.channelRef, videos: { $ne: video._id } },
+      { $addToSet: { videos: video._id }, $inc: { videosCount: 1 } },
+    )
+  } else {
+    await Channel.updateOne(
+      { _id: video.channelRef },
+      { $pull: { videos: video._id }, $inc: { videosCount: -1 } },
+    )
+  }
+}
+
+async function processVideoReplace({
+  videoId,
+  inputPath,
+  thumbPath,
+  thumbFile,
+  replaceThumb,
+}) {
+  const outDir = path.join(process.cwd(), 'tmp', 'transcoded', String(videoId))
+  const doc = await Video.findById(videoId)
+
+  if (!doc) {
+    await safeUnlink(inputPath)
+    if (thumbPath) await safeUnlink(thumbPath)
+    return
+  }
+
+  try {
+    const oldSources = sourcesToObject(doc.sources)
+    await Promise.all(
+      Object.values(oldSources).map((url) => deleteByPublicUrl(url)),
+    )
+
+    let durationSec = doc.duration || 0
+    try {
+      durationSec = await getVideoDurationSec(inputPath)
+    } catch {
+      throw new Error('Cannot read video duration')
+    }
+
+    if (replaceThumb && thumbFile && thumbPath) {
+      if (doc.thumbnailUrl) await deleteByPublicUrl(doc.thumbnailUrl)
+      const thumbExt = path.extname(thumbFile.originalname || '') || '.jpg'
+      const thumbDest = `videos/${doc._id}/thumbnail${thumbExt}`
+      doc.thumbnailUrl = await uploadMakePublic(
+        thumbPath,
+        thumbDest,
+        thumbFile.mimetype || 'image/jpeg',
+      )
+    }
+
+    const filesByQuality = await transcodeToQualities(inputPath, outDir)
+    const sources = {}
+    const qualities = []
+
+    for (const [q, localPath] of Object.entries(filesByQuality)) {
+      if (!QUALITY_ENUM.includes(q)) continue
+      const dest = `videos/${doc._id}/${q}.mp4`
+      const url = await uploadMakePublic(localPath, dest, 'video/mp4')
+      sources[q] = url
+      qualities.push(q)
+    }
+
+    const availableQualities = qualities.sort(
+      (a, b) => QUALITY_ENUM.indexOf(a) - QUALITY_ENUM.indexOf(b),
+    )
+
+    doc.duration = durationSec
+    doc.status = 'ready'
+    doc.errorMessage = ''
+    doc.sources = sources
+    doc.availableQualities = availableQualities
+    doc.maxQuality = pickMaxQuality(availableQualities)
+    await doc.save()
+
+    console.log('[update-video] replace ready', String(doc._id))
+  } catch (e) {
+    console.error('[update-video] replace failed', String(videoId), e?.message || e)
+    try {
+      doc.status = 'failed'
+      doc.errorMessage = e?.message || 'Video replace failed'
+      await doc.save()
+    } catch (saveErr) {
+      console.error('[update-video] persist error', saveErr?.message || saveErr)
+    }
+  } finally {
+    await safeUnlink(inputPath)
+    if (thumbPath) await safeUnlink(thumbPath)
+    await safeRmdir(outDir)
+  }
+}
+
 async function getVideoUploadStatusController(req, res) {
   const { id } = req.params
   if (!id || !Types.ObjectId.isValid(id)) {
@@ -303,7 +426,7 @@ async function getVideoUploadStatusController(req, res) {
 
   const video = await Video.findById(id)
     .select(
-      'status errorMessage title thumbnailUrl availableQualities maxQuality sources isPublished ownerId channelRef duration createdAt updatedAt',
+      'status errorMessage title description thumbnailUrl availableQualities maxQuality sources isPublished ownerId channelRef duration createdAt updatedAt',
     )
     .lean()
 
@@ -321,6 +444,151 @@ async function getVideoUploadStatusController(req, res) {
     errorMessage: video.errorMessage || '',
     pollAfterMs: UPLOAD_POLL_AFTER_MS,
     video,
+  })
+}
+
+async function getManageVideoController(req, res) {
+  const video = await assertOwnedVideo(req.params.id, req.user?._id)
+  return res.json({ video: video.toObject() })
+}
+
+async function updateVideoController(req, res) {
+  const videoFile = req.files?.video?.[0]
+  const thumbFile = req.files?.thumbnail?.[0]
+  const video = await assertOwnedVideo(req.params.id, req.user?._id)
+
+  const hasTitle = Object.prototype.hasOwnProperty.call(req.body, 'title')
+  const hasDescription = Object.prototype.hasOwnProperty.call(
+    req.body,
+    'description',
+  )
+  const hasPublished = Object.prototype.hasOwnProperty.call(
+    req.body,
+    'isPublished',
+  )
+
+  if (!hasTitle && !hasDescription && !hasPublished && !videoFile && !thumbFile) {
+    throw RequestError(400, 'Nothing to update')
+  }
+
+  if (hasTitle) {
+    const title = String(req.body.title || '').trim()
+    if (title.length < 2 || title.length > 140) {
+      throw RequestError(400, 'Title must be 2-140 chars')
+    }
+    video.title = title
+  }
+
+  if (hasDescription) {
+    const description = String(req.body.description || '')
+    if (description.length > 5000) {
+      throw RequestError(400, 'Description max 5000 chars')
+    }
+    video.description = description
+    video.tags = extractTagsFromDescription(description)
+  }
+
+  if (hasPublished) {
+    const nextPublished = Boolean(
+      req.body.isPublished === 'true' || req.body.isPublished === true,
+    )
+    await applyPublishFlag(video, nextPublished)
+  }
+
+  // metadata / thumbnail only — sync response
+  if (!videoFile) {
+    if (thumbFile) {
+      if (video.thumbnailUrl) await deleteByPublicUrl(video.thumbnailUrl)
+      const thumbExt = path.extname(thumbFile.originalname || '') || '.jpg'
+      const thumbDest = `videos/${video._id}/thumbnail${thumbExt}`
+      video.thumbnailUrl = await uploadMakePublic(
+        thumbFile.path,
+        thumbDest,
+        thumbFile.mimetype || 'image/jpeg',
+      )
+      await safeUnlink(thumbFile.path)
+    }
+
+    await video.save()
+    return res.json({ message: 'Video updated', video })
+  }
+
+  // replace video file → async processing (same as upload)
+  video.status = 'processing'
+  video.errorMessage = ''
+  await video.save()
+
+  res.status(202).json({
+    message: 'Video replace accepted for processing',
+    videoId: String(video._id),
+    status: 'processing',
+    pollAfterMs: UPLOAD_POLL_AFTER_MS,
+  })
+
+  setImmediate(() => {
+    void processVideoReplace({
+      videoId: video._id,
+      inputPath: videoFile.path,
+      thumbPath: thumbFile?.path || null,
+      thumbFile: thumbFile || null,
+      replaceThumb: Boolean(thumbFile),
+    })
+  })
+}
+
+async function deleteVideoController(req, res) {
+  const { id } = req.params
+  const userId = req.user?._id
+
+  if (!userId) throw RequestError(401, 'Unauthorized')
+  if (!id || !Types.ObjectId.isValid(id)) {
+    throw RequestError(400, 'Valid video id is required')
+  }
+
+  const video = await Video.findById(id)
+  if (!video) throw RequestError(404, 'Video not found')
+  if (String(video.ownerId) !== String(userId)) {
+    throw RequestError(403, 'Forbidden')
+  }
+
+  const urls = []
+  if (video.thumbnailUrl) urls.push(video.thumbnailUrl)
+  Object.values(sourcesToObject(video.sources)).forEach((url) => {
+    if (url) urls.push(url)
+  })
+
+  await Promise.all(urls.map((url) => deleteByPublicUrl(url)))
+
+  // leftovers under videos/<id>/
+  try {
+    const { bucket } = require('../config/firebaseConfig')
+    await bucket.deleteFiles({ prefix: `videos/${id}/`, force: true })
+  } catch (e) {
+    console.error('[delete-video] storage prefix cleanup', e?.message || e)
+  }
+
+  await Comment.deleteMany({ videoId: video._id })
+  await Playlist.updateMany(
+    { 'items.videoId': video._id },
+    { $pull: { items: { videoId: video._id } } },
+  )
+  await MyPlaylist.updateMany(
+    { 'items.videoId': video._id },
+    { $pull: { items: { videoId: video._id } } },
+  )
+
+  if (video.isPublished) {
+    await Channel.updateOne(
+      { _id: video.channelRef },
+      { $pull: { videos: video._id }, $inc: { videosCount: -1 } },
+    )
+  }
+
+  await Video.deleteOne({ _id: video._id })
+
+  return res.json({
+    message: 'Video deleted',
+    videoId: String(id),
   })
 }
 
@@ -379,10 +647,14 @@ async function getChannelVideoController(req, res, next) {
     const limitNum = Math.min(toInt(limit, 20), 50)
     const skip = (pageNum - 1) * limitNum
 
-    const filter = { channelRef: channelId, status: 'ready' }
+    const filter = { channelRef: channelId }
 
     const pubOnly = toBool(publishedOnly)
-    if (pubOnly === true) filter.isPublished = true
+    // Public channel feed: only ready+published. Owner manage (publishedOnly=false): all statuses.
+    if (pubOnly === true) {
+      filter.status = 'ready'
+      filter.isPublished = true
+    }
 
     const q = String(query || '').trim()
     if (q) {
@@ -1198,6 +1470,9 @@ async function searchVideosController(req, res, next) {
 module.exports = {
   uploadVideoController,
   getVideoUploadStatusController,
+  getManageVideoController,
+  updateVideoController,
+  deleteVideoController,
   getVideosController,
   getChannelVideoController,
   getVideosPickerController,
