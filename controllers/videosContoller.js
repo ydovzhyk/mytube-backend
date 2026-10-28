@@ -115,6 +115,96 @@ async function saveSearchHistory({ user, visitorId, q }) {
   return { user: null, visitor: null }
 }
 
+const UPLOAD_POLL_AFTER_MS = 3000
+
+// -------------------------
+// Background upload job (transcode + Firebase)
+// Client gets 202 first — avoids Heroku/Vercel long-request timeouts
+// -------------------------
+async function processAcceptedVideoUpload({
+  videoId,
+  inputPath,
+  thumbPath,
+  thumbFile,
+  channelId,
+}) {
+  const outDir = path.join(process.cwd(), 'tmp', 'transcoded', String(videoId))
+  const doc = await Video.findById(videoId)
+  if (!doc) {
+    await safeUnlink(inputPath)
+    await safeUnlink(thumbPath)
+    return
+  }
+
+  try {
+    const thumbExt = path.extname(thumbFile.originalname || '') || '.jpg'
+    const thumbDest = `videos/${doc._id}/thumbnail${thumbExt}`
+    const thumbContentType = thumbFile.mimetype || 'image/jpeg'
+
+    const thumbUploadPromise = uploadMakePublic(
+      thumbPath,
+      thumbDest,
+      thumbContentType,
+    )
+    const transcodePromise = transcodeToQualities(inputPath, outDir)
+
+    const [thumbnailUrl, filesByQuality] = await Promise.all([
+      thumbUploadPromise,
+      transcodePromise,
+    ])
+
+    const sources = {}
+    const qualities = []
+
+    for (const [q, localPath] of Object.entries(filesByQuality)) {
+      if (!QUALITY_ENUM.includes(q)) continue
+      const dest = `videos/${doc._id}/${q}.mp4`
+      const url = await uploadMakePublic(localPath, dest, 'video/mp4')
+      sources[q] = url
+      qualities.push(q)
+    }
+
+    const availableQualities = qualities.sort(
+      (a, b) => QUALITY_ENUM.indexOf(a) - QUALITY_ENUM.indexOf(b),
+    )
+    const maxQuality = pickMaxQuality(availableQualities)
+
+    doc.status = 'ready'
+    doc.errorMessage = ''
+    doc.thumbnailUrl = thumbnailUrl
+    doc.sources = sources
+    doc.availableQualities = availableQualities
+    doc.maxQuality = maxQuality
+
+    await doc.save()
+
+    if (doc.isPublished) {
+      await Channel.updateOne(
+        { _id: channelId, videos: { $ne: doc._id } },
+        { $addToSet: { videos: doc._id }, $inc: { videosCount: 1 } },
+      )
+    }
+
+    console.log('[upload] ready', String(doc._id))
+  } catch (e) {
+    console.error('[upload] failed', String(videoId), e?.message || e)
+    try {
+      doc.status = 'failed'
+      doc.errorMessage = e?.message || 'Upload failed'
+      await doc.save()
+    } catch (saveErr) {
+      console.error(
+        '[upload] failed to persist error',
+        saveErr?.message || saveErr,
+      )
+    }
+  } finally {
+    await safeUnlink(inputPath)
+    await safeUnlink(thumbPath)
+    await safeRmdir(outDir)
+  }
+}
+
 // -------------------------
 // Controllers
 // -------------------------
@@ -186,68 +276,52 @@ async function uploadVideoController(req, res) {
     duration: durationSec,
   })
 
-  const outDir = path.join(process.cwd(), 'tmp', 'transcoded', String(doc._id))
+  // Accept quickly — client polls GET /videos/:id/status
+  res.status(202).json({
+    message: 'Video accepted for processing',
+    videoId: String(doc._id),
+    status: 'processing',
+    pollAfterMs: UPLOAD_POLL_AFTER_MS,
+  })
 
-  try {
-    const thumbExt = path.extname(thumbFile.originalname || '') || '.jpg'
-    const thumbDest = `videos/${doc._id}/thumbnail${thumbExt}`
-    const thumbContentType = thumbFile.mimetype || 'image/jpeg'
-
-    const thumbUploadPromise = uploadMakePublic(
+  setImmediate(() => {
+    void processAcceptedVideoUpload({
+      videoId: doc._id,
+      inputPath,
       thumbPath,
-      thumbDest,
-      thumbContentType,
-    )
-    const transcodePromise = transcodeToQualities(inputPath, outDir)
+      thumbFile,
+      channelId: channel._id,
+    })
+  })
+}
 
-    const [thumbnailUrl, filesByQuality] = await Promise.all([
-      thumbUploadPromise,
-      transcodePromise,
-    ])
-
-    const sources = {}
-    const qualities = []
-
-    for (const [q, localPath] of Object.entries(filesByQuality)) {
-      if (!QUALITY_ENUM.includes(q)) continue
-      const dest = `videos/${doc._id}/${q}.mp4`
-      const url = await uploadMakePublic(localPath, dest, 'video/mp4')
-      sources[q] = url
-      qualities.push(q)
-    }
-
-    const availableQualities = qualities.sort(
-      (a, b) => QUALITY_ENUM.indexOf(a) - QUALITY_ENUM.indexOf(b),
-    )
-    const maxQuality = pickMaxQuality(availableQualities)
-
-    doc.status = 'ready'
-    doc.errorMessage = ''
-    doc.thumbnailUrl = thumbnailUrl
-    doc.sources = sources
-    doc.availableQualities = availableQualities
-    doc.maxQuality = maxQuality
-
-    await doc.save()
-
-    if (doc.isPublished) {
-      await Channel.updateOne(
-        { _id: channel._id, videos: { $ne: doc._id } },
-        { $addToSet: { videos: doc._id }, $inc: { videosCount: 1 } },
-      )
-    }
-
-    return res.status(201).json({ message: 'Video uploaded', video: doc })
-  } catch (e) {
-    doc.status = 'failed'
-    doc.errorMessage = e?.message || 'Upload failed'
-    await doc.save()
-    throw RequestError(500, doc.errorMessage)
-  } finally {
-    await safeUnlink(inputPath)
-    await safeUnlink(thumbPath)
-    await safeRmdir(outDir)
+async function getVideoUploadStatusController(req, res) {
+  const { id } = req.params
+  if (!id || !Types.ObjectId.isValid(id)) {
+    throw RequestError(400, 'Valid video id is required')
   }
+
+  const video = await Video.findById(id)
+    .select(
+      'status errorMessage title thumbnailUrl availableQualities maxQuality sources isPublished ownerId channelRef duration createdAt updatedAt',
+    )
+    .lean()
+
+  if (!video) throw RequestError(404, 'Video not found')
+
+  const ownerId = String(video.ownerId || '')
+  const userId = String(req.user?._id || '')
+  if (!userId || ownerId !== userId) {
+    throw RequestError(403, 'Forbidden')
+  }
+
+  return res.json({
+    videoId: String(video._id),
+    status: video.status,
+    errorMessage: video.errorMessage || '',
+    pollAfterMs: UPLOAD_POLL_AFTER_MS,
+    video,
+  })
 }
 
 async function getVideosController(req, res) {
@@ -1123,6 +1197,7 @@ async function searchVideosController(req, res, next) {
 
 module.exports = {
   uploadVideoController,
+  getVideoUploadStatusController,
   getVideosController,
   getChannelVideoController,
   getVideosPickerController,

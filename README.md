@@ -131,7 +131,15 @@ GET /api/health
 |--------|-------------|
 | `/api/auth` | Register, login, logout, refresh, current user, profile |
 | `/api/google` | Google OAuth start + callback |
-| `/api/videos` | Upload, list, search, watch, reactions, views |
+| `/api/videos` | Upload (async `202` + status poll), list, search, watch, reactions, views |
+
+### Async video upload
+
+Long transcodes (minutes) must not hold the HTTP request (Heroku ~30s router timeout).
+
+1. `POST /api/videos/upload` → creates `Video` with `status: processing` → **`202`** `{ videoId, pollAfterMs }`
+2. Server continues transcode + Firebase upload in the background
+3. Client polls `GET /api/videos/:id/status` until `ready` or `failed`
 | `/api/channels` | Create/update channels, subscribe, handle check |
 | `/api/playlists` | Channel playlists |
 | `/api/my-playlists` | User playlists |

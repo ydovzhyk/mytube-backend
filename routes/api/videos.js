@@ -50,6 +50,12 @@ router.post(
 )
 
 router.get(
+  '/:id/status',
+  authorize,
+  ctrlWrapper(ctrl.getVideoUploadStatusController),
+)
+
+router.get(
   '/:id/similar',
   authorizeOptional,
   ctrlWrapper(ctrl.getSimilarVideosController)
